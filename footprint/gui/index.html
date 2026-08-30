@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>footprint</title>
+<style>
+:root{
+  --bg:#f7f7f8; --panel:#fff; --line:#e4e4e7; --ink:#18181b; --dim:#71717a;
+  --accent:#4f46e5; --good:#16a34a; --warn:#d97706; --bad:#dc2626;
+  --radius:12px; --shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0c0c0e; --panel:#141417; --line:#26262b; --ink:#ededf0; --dim:#8b8b95;
+    --accent:#818cf8; --good:#4ade80; --warn:#fbbf24; --bad:#f87171;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 20px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px 80px}
+
+/* ---------------------------------------------------------------- header */
+header{
+  position:sticky;top:0;z-index:20;background:var(--bg);
+  border-bottom:1px solid var(--line);margin-bottom:28px;
+}
+.bar{max-width:1080px;margin:0 auto;padding:16px 20px;display:flex;
+  align-items:center;gap:14px}
+.logo{font-weight:650;letter-spacing:-.02em;font-size:17px;display:flex;
+  align-items:center;gap:8px}
+.logo b{color:var(--accent)}
+.ver{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+.spacer{flex:1}
+
+/* ---------------------------------------------------------------- inputs */
+.search{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+select,input[type=text],input[type=password],textarea{
+  font:inherit;color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+}
+input[type=text],input[type=password]{flex:1;min-width:240px}
+textarea{width:100%;resize:vertical;font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{
+  font:inherit;font-weight:550;cursor:pointer;border:1px solid transparent;
+  border-radius:10px;padding:11px 18px;background:var(--accent);color:#fff;
+  transition:opacity .12s;
+}
+button:hover{opacity:.88}
+button:disabled{opacity:.5;cursor:default}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+button.sm{padding:7px 12px;font-size:13px;border-radius:8px}
+.hint{color:var(--dim);font-size:13px;margin:0 0 22px}
+#bulkPanel{margin-bottom:14px}
+.bulkbar{display:flex;align-items:center;gap:12px;margin-top:8px}
+.filebtn{display:inline-block;font-size:13px;padding:7px 12px;border-radius:8px;
+  border:1px solid var(--line);cursor:pointer;color:var(--ink)}
+.filebtn:hover{border-color:var(--accent)}
+.filebtn input{display:none}
+.risk-pill{display:inline-block;min-width:34px;text-align:center;font-weight:650;
+  font-variant-numeric:tabular-nums;padding:1px 7px;border-radius:6px;
+  background:var(--bg);border:1px solid var(--line)}
+.risk-pill.hot{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+.risk-pill.warm{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.risk-pill.cool{color:var(--good);border-color:color-mix(in srgb,var(--good) 35%,transparent)}
+
+/* -------------------------------------------------------------- progress */
+#progress{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:22px}
+.chip{
+  font-size:12px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);
+  color:var(--dim);background:var(--panel);display:flex;align-items:center;gap:6px;
+}
+.chip::before{content:"";width:6px;height:6px;border-radius:99px;background:var(--dim)}
+.chip.run::before{background:var(--accent);animation:pulse 1s ease-in-out infinite}
+.chip.ok{color:var(--ink)} .chip.ok::before{background:var(--good)}
+.chip.skip::before{background:var(--bad);opacity:.6}
+@keyframes pulse{50%{opacity:.25}}
+
+/* ----------------------------------------------------------------- cards */
+.card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:20px;margin-bottom:18px;
+}
+.card h2{margin:0 0 14px;font-size:13px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--dim)}
+
+/* ----------------------------------------------------------------- score */
+.scorecard{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+.dial{position:relative;width:132px;height:132px;flex:none}
+.dial svg{transform:rotate(-90deg)}
+.dial .num{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+}
+.dial .num b{font-size:34px;font-weight:680;letter-spacing:-.03em;line-height:1}
+.dial .num span{font-size:11px;color:var(--dim);text-transform:uppercase;
+  letter-spacing:.08em;margin-top:3px}
+.factors{flex:1;min-width:280px;list-style:none;margin:0;padding:0}
+.factors li{display:flex;gap:10px;align-items:baseline;padding:4px 0;font-size:14px}
+.factors code{
+  font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
+  background:var(--bg);padding:2px 6px;border-radius:5px;min-width:38px;
+  text-align:center;flex:none;
+}
+.factors li.severe code{color:var(--bad)}
+.factors li.caution code{color:var(--warn)}
+
+/* ----------------------------------------------------------------- tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;
+  margin-bottom:18px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px 16px;box-shadow:var(--shadow)}
+.tile b{display:block;font-size:26px;font-weight:660;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;line-height:1.15}
+.tile span{font-size:12px;color:var(--dim)}
+.tile.hot b{color:var(--bad)}
+
+/* --------------------------------------------------------------- tables */
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--dim);font-weight:600;padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.scroll{overflow-x:auto}
+.tags{display:flex;flex-wrap:wrap;gap:4px}
+.tag{font-size:11px;padding:2px 7px;border-radius:5px;background:var(--bg);
+  border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.tag.crit{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,transparent)}
+.tag.high{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.date{font-variant-numeric:tabular-nums;color:var(--dim);white-space:nowrap}
+.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+
+/* --------------------------------------------------------------- actions */
+ol.todo{list-style:none;counter-reset:t;margin:0;padding:0}
+ol.todo li{counter-increment:t;display:flex;gap:14px;padding:11px 0;
+  border-bottom:1px solid var(--line)}
+ol.todo li:last-child{border-bottom:0}
+ol.todo li::before{
+  content:counter(t);flex:none;width:24px;height:24px;border-radius:99px;
+  background:var(--accent);color:#fff;font-size:12px;font-weight:650;
+  display:grid;place-items:center;margin-top:1px;
+}
+ol.todo b{display:block;margin-bottom:2px}
+ol.todo p{margin:0;color:var(--dim);font-size:13.5px}
+
+/* -------------------------------------------------------------- timeline */
+.tl{list-style:none;margin:0;padding:0 0 0 18px;border-left:2px solid var(--line)}
+.tl li{position:relative;padding:0 0 14px 16px;font-size:14px}
+.tl li::before{content:"";position:absolute;left:-25px;top:7px;width:8px;height:8px;
+  border-radius:99px;background:var(--accent);box-shadow:0 0 0 3px var(--panel)}
+.tl .date{display:block;font-size:12px}
+
+/* ----------------------------------------------------------------- grids */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.item{border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:13.5px;
+  background:var(--bg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item a{color:var(--ink);text-decoration:none}
+.item a:hover{color:var(--accent)}
+
+/* --------------------------------------------------------------- posture */
+.posture{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.pi{border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+.pi span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--dim);margin-bottom:2px}
+.pi b{font-size:13.5px;font-weight:600;word-break:break-word}
+.pi.y b{color:var(--good)} .pi.n b{color:var(--bad)} .pi.w b{color:var(--warn)}
+.poc{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);
+  background:color-mix(in srgb,var(--warn) 8%,transparent);border-radius:9px;
+  padding:10px 12px;font-size:13px;color:var(--dim);margin:-6px 0 14px}
+.poc b{color:var(--warn)}
+.poccard{border-color:color-mix(in srgb,var(--warn) 45%,transparent);
+  background:color-mix(in srgb,var(--warn) 8%,transparent);font-size:13.5px;
+  color:var(--dim);padding:12px 16px}
+.poccard b{color:var(--warn)}
+.alert{border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);
+  background:color-mix(in srgb,var(--bad) 8%,transparent);border-radius:10px;
+  padding:12px 14px;margin-bottom:14px}
+.alert b{color:var(--bad)}
+
+/* --------------------------------------------------------------- notices */
+.notice{color:var(--dim);font-size:13px;padding:3px 0}
+.big{font-size:17px;font-weight:600;margin:0 0 6px}
+.center{text-align:center;padding:36px 0;color:var(--dim)}
+.hide{display:none !important}
+.err{color:var(--bad)}
+
+/* -------------------------------------------------------------- settings */
+dialog{
+  border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);
+  color:var(--ink);max-width:480px;width:calc(100% - 40px);padding:22px;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+.field input[type=text],.field input[type=password]{width:100%}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:14px}
+.actionsrow{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+.hook{display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:6px;
+  border:1px solid var(--line);border-radius:8px;font-size:13px;cursor:pointer}
+.hook .url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim)}
+.hook .x{background:none;border:0;color:var(--dim);font-size:16px;padding:0 4px;
+  line-height:1;cursor:pointer}
+.hook .x:hover{color:var(--bad);opacity:1}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <div class="logo"><b>◈</b> footprint <span class="ver">v__VERSION__</span></div>
+    <div class="spacer"></div>
+    <button class="ghost sm" id="btnSettings">Settings</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="search">
+    <select id="kind">
+      <option value="email">Email</option>
+      <option value="domain">Domain</option>
+      <option value="username">Username</option>
+      <option value="password">Password</option>
+      <option value="bulk">Bulk</option>
+    </select>
+    <input type="text" id="subject" placeholder="you@example.com" autocomplete="off"
+           spellcheck="false">
+    <select id="bulkKind" class="hide">
+      <option value="auto">Detect</option>
+      <option value="email">Emails</option>
+      <option value="domain">Domains</option>
+      <option value="username">Usernames</option>
+      <option value="password">Passwords</option>
+    </select>
+    <button id="btnScan">Scan</button>
+  </div>
+  <div id="bulkPanel" class="hide">
+    <textarea id="bulkText" rows="6" spellcheck="false"
+      placeholder="One subject per line"></textarea>
+    <div class="bulkbar">
+      <label class="filebtn">Load a file<input type="file" id="bulkFile"
+        accept=".txt,.text,text/plain"></label>
+      <span class="notice" id="bulkCount"></span>
+    </div>
+  </div>
+  <p class="hint" id="hint">
+    Runs every keyless source at once. Use only on accounts you own or are
+    authorized to assess.
+  </p>
+
+  <div id="progress"></div>
+  <div id="results"></div>
+
+  <div class="center" id="empty">Nothing scanned yet.</div>
+</div>
+
+<dialog id="settings">
+  <h2 style="margin:0 0 16px;font-size:16px">Settings</h2>
+  <div class="field"><label>HIBP API key</label>
+    <input type="password" id="s_hibp" autocomplete="off"></div>
+  <div class="field"><label>DeHashed account email</label>
+    <input type="text" id="s_dehashed_email" autocomplete="off"></div>
+  <div class="field"><label>DeHashed API key</label>
+    <input type="password" id="s_dehashed" autocomplete="off"></div>
+  <div class="field"><label>IntelX API key</label>
+    <input type="password" id="s_intelx" autocomplete="off"></div>
+  <div class="field"><label>Hunter.io API key</label>
+    <input type="password" id="s_hunter" autocomplete="off"></div>
+  <div class="field"><label>EmailRep API key</label>
+    <input type="password" id="s_emailrep" autocomplete="off"></div>
+  <div class="row"><input type="checkbox" id="s_tor"><label for="s_tor">Route through Tor</label></div>
+  <div class="field"><label>Tor SOCKS proxy</label>
+    <input type="text" id="s_tor_proxy"></div>
+  <div class="row"><input type="checkbox" id="s_cache"><label for="s_cache">Cache responses</label></div>
+  <div class="field"><label>Webhooks</label>
+    <div id="hookList"></div>
+    <textarea id="s_webhooks" rows="2" spellcheck="false"
+      placeholder="Add a webhook — one URL per line"></textarea>
+    <p class="notice" id="hookState"></p>
+    <button class="ghost sm" id="btnTestHook">Send test message</button>
+  </div>
+  <div class="actionsrow">
+    <button class="ghost" id="btnClose">Close</button>
+    <button id="btnSave">Save</button>
+  </div>
+</dialog>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const api = (path, opts = {}) => fetch(path + (path.includes("?") ? "&" : "?") +
+  "token=" + encodeURIComponent(TOKEN), {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+  });
+
+const PLACEHOLDER = {
+  email: "you@example.com", domain: "example.com",
+  username: "somehandle", password: "checked locally by k-anonymity",
+};
+const HINT = {
+  email: "Runs every keyless source at once. Use only on accounts you own or are authorized to assess.",
+  domain: "DNS posture, DKIM/DNSSEC/MTA-STS, certificate-transparency subdomains, and dangling-CNAME takeover checks.",
+  username: "Sweeps ~600 public sites from the WhatsMyName dataset. This one takes a minute.",
+  password: "Only the first 5 characters of the SHA-1 hash leave this machine. The password itself never does.",
+  bulk: "One subject per line. Passwords are labelled by line number and never displayed.",
+};
+
+let currentJob = null;
+
+$("#kind").onchange = () => {
+  const k = $("#kind").value;
+  const isBulk = k === "bulk";
+  $("#subject").classList.toggle("hide", isBulk);
+  $("#bulkKind").classList.toggle("hide", !isBulk);
+  $("#bulkPanel").classList.toggle("hide", !isBulk);
+  $("#subject").type = k === "password" ? "password" : "text";
+  $("#subject").placeholder = PLACEHOLDER[k] || "";
+  $("#subject").value = "";
+  $("#hint").textContent = HINT[k];
+  countLines();
+};
+
+function bulkLines() {
+  return $("#bulkText").value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+}
+
+function countLines() {
+  const n = bulkLines().length;
+  $("#bulkCount").textContent = n ? `${n} subject${n === 1 ? "" : "s"}` : "";
+}
+$("#bulkText").addEventListener("input", countLines);
+
+// Read the file in the browser and drop it into the box, so the server never
+// needs a filesystem path and you can edit the list before scanning.
+$("#bulkFile").addEventListener("change", (ev) => {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { $("#bulkText").value = reader.result; countLines(); };
+  reader.readAsText(file);
+  ev.target.value = "";
+});
+$("#subject").addEventListener("keydown", e => { if (e.key === "Enter") scan(); });
+$("#btnScan").onclick = scan;
+
+// ------------------------------------------------------------------- scan
+async function scan() {
+  const kind = $("#kind").value;
+  const subject = $("#subject").value.trim();
+  const subjects = kind === "bulk" ? bulkLines() : [];
+  if (kind === "bulk" ? !subjects.length : !subject) return;
+
+  $("#empty").classList.add("hide");
+  $("#btnScan").disabled = true;
+  $("#progress").innerHTML = "";
+  $("#results").innerHTML = "";
+  bulkRows = [];
+
+  try {
+    if (kind === "password") return await checkPassword(subject);
+
+    const body = kind === "bulk"
+      ? { kind, subject: "", subjects, bulk_kind: $("#bulkKind").value }
+      : { kind, subject };
+    const res = await api("/api/scan", {
+      method: "POST", body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) return fail(data.error);
+    currentJob = data.job;
+    listen(data.job, subject, kind);
+  } catch (err) {
+    fail(err.message);
+  }
+}
+
+function listen(job, subject, kind) {
+  const src = new EventSource(
+    `/api/events?job=${encodeURIComponent(job)}&token=${encodeURIComponent(TOKEN)}`);
+  const chips = {};
+
+  src.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "bulkkind") {
+      $("#hint").textContent = `Detected ${msg.kind}s.`;
+    } else if (msg.type === "bulkrow") {
+      bulkRows.push(msg);
+      renderBulkProgress();
+    } else if (msg.type === "progress") {
+      let chip = chips[msg.label];
+      if (!chip) {
+        chip = document.createElement("div");
+        chip.className = "chip";
+        chip.textContent = msg.label;
+        chips[msg.label] = chip;
+        $("#progress").appendChild(chip);
+      }
+      chip.className = "chip " + ({ start: "run", ok: "ok", skip: "skip" }[msg.status] || "");
+    } else if (msg.type === "result") {
+      src.close();
+      $("#btnScan").disabled = false;
+      if (msg.error) return fail(msg.error);
+      render(msg.payload, kind);
+    }
+  };
+  src.onerror = () => {
+    src.close();
+    $("#btnScan").disabled = false;
+  };
+}
+
+async function checkPassword(value) {
+  try {
+    const res = await api("/api/password", {
+      method: "POST", body: JSON.stringify({ value }),
+    });
+    const d = await res.json();
+    if (d.error) return fail(d.error);
+    $("#results").innerHTML = d.exposed
+      ? `<div class="card"><h2>Password</h2>
+         <p class="big err">Compromised — seen ${d.count.toLocaleString()} time(s).</p>
+         <p class="notice">This password is in public breach corpora. Do not use it
+         anywhere. If you already have, change it there first.</p></div>`
+      : `<div class="card"><h2>Password</h2>
+         <p class="big" style="color:var(--good)">Not found in the Pwned Passwords set.</p>
+         <p class="notice">Absence is not proof of safety — it only means this exact
+         string is not in the corpus yet.</p></div>`;
+  } catch (err) {
+    fail(err.message);
+  } finally {
+    $("#btnScan").disabled = false;
+    $("#subject").value = "";
+  }
+}
+
+function fail(message) {
+  $("#btnScan").disabled = false;
+  $("#results").innerHTML =
+    `<div class="card"><p class="big err">Scan failed</p>
+     <p class="notice">${esc(message)}</p></div>`;
+}
+
+// ----------------------------------------------------------------- render
+let bulkRows = [];
+
+// Rows arrive one at a time, so the table fills in as the scan runs.
+function renderBulkProgress() {
+  $("#results").innerHTML = bulkTable(bulkRows, true);
+}
+
+function riskClass(risk) {
+  return { Critical: "hot", High: "hot", Moderate: "warm", Medium: "warm" }[risk] || "cool";
+}
+
+function bulkTable(rows, running) {
+  const exposed = rows.filter(r => r.exposed).length;
+  const body = rows.map(r => `<tr>
+    <td><span class="risk-pill ${r.error ? "" : riskClass(r.risk)}">${
+      r.error ? "!" : r.score}</span></td>
+    <td><b>${esc(r.label)}</b></td>
+    <td class="notice">${esc(r.error || r.risk)}</td>
+    <td class="notice">${esc(r.error ? "" : r.detail)}</td>
+  </tr>`).join("");
+  return `<div class="card"><h2>${running ? "Scanning" : "Results"} —
+    ${rows.length} subject(s), ${exposed} exposed</h2>
+    <div class="scroll"><table><thead><tr><th>Score</th><th>Subject</th>
+    <th>Risk</th><th>Detail</th></tr></thead><tbody>${body}</tbody></table></div>
+    </div>`;
+}
+
+function render(payload, kind) {
+  const s = payload.sections || {};
+  const html = [];
+
+  if (s.bulk) {
+    html.push(bulkTable(s.bulk, false));
+    if (payload.notes?.length) html.push(notes(payload.notes));
+    html.push(exportBar());
+    $("#results").innerHTML = html.join("");
+    return;
+  }
+
+  if (kind === "domain") html.push(`<div class="card poccard">
+    <b>Proof of concept.</b> The domain checker is a test of a concept and may
+    not give accurate results. Needs more research.</div>`);
+  if (s.risk) html.push(scoreCard(s.risk));
+  html.push(tiles(s));
+  if (s.risk && s.risk.actions && s.risk.actions.length) html.push(todo(s.risk.actions));
+  if (s.recon) html.push(posture(s.recon));
+
+  const breaches = [...(s.breaches || []), ...(s.xon_breaches || [])];
+  if (breaches.length) html.push(breachTable(dedupe(breaches)));
+  if (s.accounts && s.accounts.length) html.push(accounts(s.accounts));
+  if (s.sites) html.push(sites(s.sites));
+  if (s.leaks && s.leaks.length) html.push(leaks(s.leaks));
+  if (s.darkweb && s.darkweb.length) html.push(darkweb(s.darkweb));
+  if (s.pastes && s.pastes.length) html.push(pastes(s.pastes));
+  if (payload.timeline && payload.timeline.length) html.push(timeline(payload.timeline));
+  if (s.recon && s.recon.subdomains && s.recon.subdomains.length)
+    html.push(subdomains(s.recon.subdomains));
+  if (payload.notes && payload.notes.length) html.push(notes(payload.notes));
+  html.push(exportBar());
+
+  $("#results").innerHTML = html.join("");
+}
+
+function dedupe(list) {
+  const seen = new Set(), out = [];
+  for (const b of list) {
+    const key = (b.name || b.title || "").toLowerCase();
+    if (key && !seen.has(key)) { seen.add(key); out.push(b); }
+  }
+  return out;
+}
+
+function tone(label) {
+  return { Critical: "bad", High: "bad", Moderate: "warn", Medium: "warn" }[label] || "good";
+}
+
+function scoreCard(risk) {
+  const score = risk.score || 0;
+  const color = `var(--${tone(risk.label)})`;
+  const R = 56, C = 2 * Math.PI * R;
+  const dash = (score / 100) * C;
+  return `<div class="card"><h2>Exposure score</h2><div class="scorecard">
+    <div class="dial">
+      <svg width="132" height="132" viewBox="0 0 132 132">
+        <circle cx="66" cy="66" r="${R}" fill="none" stroke="var(--line)" stroke-width="11"/>
+        <circle cx="66" cy="66" r="${R}" fill="none" stroke="${color}" stroke-width="11"
+          stroke-linecap="round" stroke-dasharray="${dash} ${C}"/>
+      </svg>
+      <div class="num"><b style="color:${color}">${score}</b>
+        <span>${esc(risk.label)}</span></div>
+    </div>
+    <ul class="factors">${
+      (risk.factors || []).map(f =>
+        `<li class="${esc(f.weight)}"><code>+${f.points}</code><span>${esc(f.reason)}</span></li>`
+      ).join("") || '<li class="notice">Nothing scored — no exposure found.</li>'
+    }</ul></div></div>`;
+}
+
+function tiles(s) {
+  const breaches = dedupe([...(s.breaches || []), ...(s.xon_breaches || [])]).length;
+  const found = (s.sites || []).filter(x => x.exists).length;
+  // "neutral" counts are informational; the rest turn red when non-zero.
+  const neutral = new Set(["subdomains", "sites found"]);
+  const defs = [
+    ["breaches", breaches],
+    ["accounts", (s.accounts || []).length],
+    ["leak records", (s.leaks || []).length],
+    ["pastes", (s.pastes || []).length],
+    ["dark-web hits", (s.darkweb || []).length],
+    // A failed crt.sh sweep must not render as a confident "0".
+    ["subdomains", s.recon?.subdomain_error ? null : (s.recon?.subdomains || []).length],
+    ["sites found", s.sites ? found : null],
+  ].filter(([, v]) => v);  // hide anything absent or zero
+
+  if (!defs.length) return "";
+  return `<div class="tiles">${defs.map(([label, v]) =>
+    `<div class="tile ${neutral.has(label) ? "" : "hot"}">
+      <b>${v.toLocaleString()}</b><span>${label}</span></div>`).join("")}</div>`;
+}
+
+function todo(actions) {
+  return `<div class="card"><h2>What to do now</h2>
+    <p class="poc">Proof of concept — this advice is generated from the
+    findings above and may be inaccurate.</p>
+    <ol class="todo">${
+    actions.map(a => `<li><div><b>${esc(a.title)}</b><p>${esc(a.detail)}</p></div></li>`)
+      .join("")}</ol></div>`;
+}
+
+const CRIT = /password|hash|social security|ssn|credit card|bank|financial|payment|passport|security (question|answer)|private key|token|driver|tax/i;
+const HIGHR = /physical address|home address|phone|date of birth|geo|health|medical|income|salary|employer/i;
+
+function classTag(c) {
+  const cls = CRIT.test(c) ? "crit" : HIGHR.test(c) ? "high" : "";
+  return `<span class="tag ${cls}">${esc(c)}</span>`;
+}
+
+// A heavily-exposed address can hit 200+ breaches. Rendering every one makes
+// the page thousands of pixels tall and janky to scroll, so the long lists are
+// capped in the UI — the full set is always in the exported report.
+const ROW_CAP = 60;
+const TL_CAP = 50;
+
+function more(shown, total, what) {
+  return total > shown
+    ? `<p class="notice">Showing the ${shown} most recent of ${total} ${what} —
+       export the report for the full set.</p>`
+    : "";
+}
+
+function breachTable(breaches) {
+  const sorted = breaches
+    .sort((a, b) => (b.breach_date || "").localeCompare(a.breach_date || ""));
+  const rows = sorted
+    .slice(0, ROW_CAP)
+    .map(b => `<tr>
+      <td><b>${esc(b.title || b.name)}</b>${b.is_sensitive
+        ? ' <span class="tag crit">sensitive</span>' : ""}${b.domain
+        ? `<div class="notice">${esc(b.domain)}</div>` : ""}</td>
+      <td class="date">${esc(b.breach_date || "?")}</td>
+      <td class="num">${b.pwn_count ? b.pwn_count.toLocaleString() : "?"}</td>
+      <td><div class="tags">${(b.data_classes || []).map(classTag).join("")}</div></td>
+    </tr>`).join("");
+  return `<div class="card"><h2>Breaches (${breaches.length})</h2><div class="scroll">
+    <table><thead><tr><th>Breach</th><th>Date</th><th>Accounts</th>
+    <th>Exposed data</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${more(ROW_CAP, sorted.length, "breaches")}</div>`;
+}
+
+function accounts(list) {
+  return `<div class="card"><h2>Registered accounts (${list.length})</h2>
+    <p class="notice" style="margin:-8px 0 12px">Sites confirmed to have an account
+    on this address — the exact list to enable 2FA on.</p>
+    <div class="grid">${list.map(a =>
+      `<div class="item">${esc(a.site)}</div>`).join("")}</div></div>`;
+}
+
+function sites(list) {
+  const found = list.filter(x => x.exists);
+  if (!found.length)
+    return `<div class="card"><h2>Username</h2>
+      <p class="notice">No hits across ${list.length} sites checked.</p></div>`;
+  return `<div class="card"><h2>Found on ${found.length} of ${list.length} sites</h2>
+    <div class="grid">${found.map(h =>
+      `<div class="item"><a href="${esc(h.url)}" target="_blank" rel="noopener">
+        ${esc(h.site)}</a></div>`).join("")}</div></div>`;
+}
+
+function leaks(list) {
+  return `<div class="card"><h2>Leak records (${list.length})</h2>
+    <p class="notice" style="margin:-8px 0 12px">Secret values are redacted —
+    footprint records that a field was present, never its value.</p>
+    <div class="scroll"><table><thead><tr><th>Database</th><th>Fields present</th>
+    <th>Username</th></tr></thead><tbody>${list.slice(0, 60).map(r =>
+      `<tr><td>${esc(r.database)}</td>
+       <td><div class="tags">${(r.fields_present || []).map(classTag).join("")}</div></td>
+       <td>${esc(r.username || "")}</td></tr>`).join("")}
+    </tbody></table></div></div>`;
+}
+
+function darkweb(list) {
+  return `<div class="card"><h2>Dark-web index (${list.length})</h2>
+    <p class="notice" style="margin:-8px 0 12px">Catalog metadata only —
+    never the leaked contents.</p>
+    <div class="scroll"><table><thead><tr><th>Date</th><th>Bucket</th><th>Name</th>
+    </tr></thead><tbody>${list.slice(0, 60).map(m =>
+      `<tr><td class="date">${esc(m.date || "?")}</td><td>${esc(m.bucket)}</td>
+       <td>${esc(m.name)}</td></tr>`).join("")}</tbody></table></div></div>`;
+}
+
+function pastes(list) {
+  return `<div class="card"><h2>Pastes (${list.length})</h2>
+    <div class="grid">${list.map(p =>
+      `<div class="item">${esc(p.source)} — ${esc(p.title || "untitled")}</div>`)
+      .join("")}</div></div>`;
+}
+
+function posture(r) {
+  const yn = (v, good, bad) => v
+    ? `<div class="pi y"><span>${good.label}</span><b>${esc(good.text)}</b></div>`
+    : `<div class="pi n"><span>${bad.label}</span><b>${esc(bad.text)}</b></div>`;
+
+  const policy = (r.dmarc_policy || "").toLowerCase();
+  const dmarcCls = !r.dmarc ? "n" : (policy === "reject" ? "y" : "w");
+  const dmarcTxt = !r.dmarc ? "missing" : `p=${policy || "?"}`;
+
+  let out = "";
+  if (r.takeovers && r.takeovers.length) {
+    out += `<div class="alert"><b>Subdomain takeover — ${r.takeovers.length} dangling record(s)</b>
+      <p class="notice" style="margin:6px 0 0">These names point at a service that no
+      longer claims them. Anyone can register the target and serve content on your
+      domain.</p>
+      <div class="grid" style="margin-top:10px">${r.takeovers.map(t =>
+        `<div class="item">${esc(t.host)} → ${esc(t.service)}</div>`).join("")}</div></div>`;
+  }
+  out += `<div class="card"><h2>Email &amp; DNS posture</h2>
+  <div class="posture">
+    <div class="pi ${r.mx?.length ? "y" : "w"}"><span>MX</span>
+      <b>${r.mx?.length ? esc(r.mx.length + " host(s)") : "none"}</b></div>
+    ${yn(r.spf, { label: "SPF", text: "present" }, { label: "SPF", text: "missing" })}
+    <div class="pi ${dmarcCls}"><span>DMARC</span><b>${esc(dmarcTxt)}</b></div>
+    <div class="pi ${r.dnssec ? "y" : "w"}"><span>DNSSEC</span>
+      <b>${r.dnssec ? "enabled" : "not enabled"}</b></div>
+    <div class="pi ${r.dkim_selectors?.length ? "y" : "w"}"><span>DKIM</span>
+      <b>${r.dkim_selectors?.length ? esc(r.dkim_selectors.join(", ")) : "no key found"}</b></div>
+    <div class="pi ${r.mta_sts ? "y" : "w"}"><span>MTA-STS</span>
+      <b>${r.mta_sts ? "present" : "missing"}</b></div>
+    <div class="pi ${r.tls_rpt ? "y" : "w"}"><span>TLS-RPT</span>
+      <b>${r.tls_rpt ? "present" : "missing"}</b></div>
+    <div class="pi ${r.bimi ? "y" : ""}"><span>BIMI</span>
+      <b>${r.bimi ? "present" : "—"}</b></div>
+  </div>${r.subdomain_error
+    ? `<p class="notice" style="margin-top:12px">Subdomain enumeration
+       unavailable — ${esc(r.subdomain_error)}</p>` : ""}${r.email_pattern
+    ? `<p class="notice" style="margin-top:12px">Email pattern:
+       <code>${esc(r.email_pattern)}</code></p>` : ""}</div>`;
+  return out;
+}
+
+function subdomains(list) {
+  return `<div class="card"><h2>Subdomains (${list.length})</h2>
+    <div class="grid">${list.slice(0, 120).map(s =>
+      `<div class="item">${esc(s)}</div>`).join("")}</div>${
+    list.length > 120 ? `<p class="notice">…and ${list.length - 120} more.</p>` : ""}</div>`;
+}
+
+function timeline(events) {
+  return `<div class="card"><h2>Exposure timeline</h2><ul class="tl">${
+    events.slice(0, TL_CAP).map(e =>
+      `<li><span class="date">${esc(e.date || "undated")}</span>
+      ${esc(e.label)} <span class="notice">· ${esc(e.kind)} · ${esc(e.source)}</span></li>`)
+      .join("")}</ul>${more(TL_CAP, events.length, "events")}</div>`;
+}
+
+function notes(list) {
+  return `<div class="card"><h2>Sources skipped</h2>${
+    list.map(n => `<p class="notice">— ${esc(n)}</p>`).join("")}</div>`;
+}
+
+function exportBar() {
+  return `<div class="card"><h2>Export</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <a href="/api/report?job=${encodeURIComponent(currentJob)}&token=${
+        encodeURIComponent(TOKEN)}" download>
+        <button class="ghost sm">Download report</button></a>
+      <button class="ghost sm" id="btnSend">Send to webhook</button>
+      <span class="notice" id="sendState"></span>
+    </div></div>`;
+}
+
+// Delegated: the export bar is re-created on every scan.
+document.addEventListener("click", async (ev) => {
+  if (ev.target.id !== "btnSend") return;
+  const btn = ev.target, state = $("#sendState");
+  btn.disabled = true;
+  state.textContent = "sending…";
+  try {
+    const r = await (await api("/api/notify", {
+      method: "POST", body: JSON.stringify({ job: currentJob }),
+    })).json();
+    state.textContent = r.error ? r.error
+      : `sent to ${r.sent} webhook(s)` + (r.errors?.length ? ` — ${r.errors.join("; ")}` : "");
+  } catch (err) {
+    state.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// --------------------------------------------------------------- settings
+const dlg = $("#settings");
+$("#btnSettings").onclick = async () => {
+  const s = await (await api("/api/settings")).json();
+  $("#s_hibp").placeholder = s.hibp || "not set";
+  $("#s_dehashed").placeholder = s.dehashed || "not set";
+  $("#s_intelx").placeholder = s.intelx || "not set";
+  $("#s_hunter").placeholder = s.hunter || "not set";
+  $("#s_emailrep").placeholder = s.emailrep || "not set";
+  $("#s_dehashed_email").value = s.dehashed_email || "";
+  $("#s_tor").checked = !!s.tor;
+  $("#s_tor_proxy").value = s.tor_proxy || "";
+  $("#s_cache").checked = !!s.cache;
+  renderHooks(s.webhooks || []);
+  $("#s_webhooks").value = "";
+  dlg.showModal();
+};
+
+// Each webhook gets its own switch; only the checked ones receive results.
+function renderHooks(hooks) {
+  const el = $("#hookList");
+  if (!hooks.length) {
+    el.innerHTML = `<p class="notice">None configured.</p>`;
+    $("#hookState").textContent = "";
+    return;
+  }
+  el.innerHTML = hooks.map((h, i) => `
+    <label class="hook">
+      <input type="checkbox" data-hook="${i}" ${h.enabled ? "checked" : ""}>
+      <span class="url">${esc(h.url)}</span>
+      <span class="tag">${h.discord ? "Discord" : "generic"}</span>
+      <button class="x" data-drop="${i}" title="Remove">&times;</button>
+    </label>`).join("");
+  const on = hooks.filter(h => h.enabled).length;
+  $("#hookState").textContent = `${on} of ${hooks.length} enabled.`;
+}
+
+// Removals are staged until Save, so an accidental click is recoverable.
+let dropped = new Set();
+$("#hookList").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-drop]");
+  if (!btn) return;
+  ev.preventDefault();
+  const i = btn.dataset.drop;
+  dropped.add(Number(i));
+  btn.closest(".hook").style.opacity = ".35";
+  btn.closest(".hook").querySelector("input").checked = false;
+  $("#hookState").textContent = `${dropped.size} marked for removal — Save to apply.`;
+});
+
+$("#btnTestHook").onclick = async () => {
+  const el = $("#hookState");
+  el.textContent = "sending…";
+  try {
+    const r = await (await api("/api/notify", {
+      method: "POST", body: JSON.stringify({ test: true }),
+    })).json();
+    el.textContent = r.error ? r.error
+      : `sent to ${r.sent} webhook(s)` + (r.errors?.length ? ` — ${r.errors.join("; ")}` : "");
+  } catch (err) { el.textContent = err.message; }
+};
+$("#btnClose").onclick = () => { dropped.clear(); dlg.close(); };
+
+$("#btnSave").onclick = async () => {
+  const states = {};
+  document.querySelectorAll("#hookList input[data-hook]")
+    .forEach(cb => { states[cb.dataset.hook] = cb.checked; });
+  const added = $("#s_webhooks").value.split(/\r?\n/)
+    .map(x => x.trim()).filter(Boolean);
+
+  const res = await (await api("/api/settings", {
+    method: "POST",
+    body: JSON.stringify({
+      hibp: $("#s_hibp").value, dehashed_email: $("#s_dehashed_email").value,
+      dehashed: $("#s_dehashed").value, intelx: $("#s_intelx").value,
+      hunter: $("#s_hunter").value, emailrep: $("#s_emailrep").value,
+      tor: $("#s_tor").checked, tor_proxy: $("#s_tor_proxy").value,
+      cache: $("#s_cache").checked,
+      webhook_states: states,
+      add_webhooks: added,
+      remove_webhooks: [...dropped],
+    }),
+  })).json();
+
+  dropped.clear();
+  ["s_hibp", "s_dehashed", "s_intelx", "s_hunter", "s_emailrep", "s_webhooks"]
+    .forEach(id => { $("#" + id).value = ""; });
+  renderHooks(res.settings?.webhooks || []);
+  dlg.close();
+};
+
+$("#subject").focus();
+</script>
+</body>
+</html>

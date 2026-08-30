@@ -1,0 +1,11 @@
+# Convenience for local development:
+#     pip install -r requirements.txt
+#
+# The actual dependency list lives in pyproject.toml, so there is only ever one
+# place to edit and nothing here can drift out of sync. This installs footprint
+# in editable mode along with the test and lint tooling.
+-e .[dev]
+
+# Optional: keyless registered-account discovery (email -> accounts).
+# Uncomment to install it too.
+# -e .[holehe]

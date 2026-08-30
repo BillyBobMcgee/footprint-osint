@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local secrets — never commit API keys
+.env
+*.local
+config.json
+
+# Scan output. These hold real exposure data about real people, and footprint
+# writes them straight into the working directory, so keep them out by default.
+footprint-*.html
+reports/
+*.sqlite3
+
+# Likely input files. A password list in the repo is the worst possible commit.
+passwords.txt
+vault.txt
+emails.txt
