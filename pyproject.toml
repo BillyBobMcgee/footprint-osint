@@ -41,8 +41,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/BillyBobMcgee/footprint"
-Issues = "https://github.com/BillyBobMcgee/footprint/issues"
+Homepage = "https://github.com/BillyBobMcgee/footprint-osint"
+Repository = "https://github.com/BillyBobMcgee/footprint-osint"
+Changelog = "https://github.com/BillyBobMcgee/footprint-osint/blob/main/CHANGELOG.md"
+Issues = "https://github.com/BillyBobMcgee/footprint-osint/issues"
 
 [project.scripts]
 footprint = "footprint.cli:main"

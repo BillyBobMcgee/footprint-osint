@@ -1,16 +1,28 @@
 # footprint
 
+[![CI](https://github.com/BillyBobMcgee/footprint-osint/actions/workflows/ci.yml/badge.svg)](https://github.com/BillyBobMcgee/footprint-osint/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/footprint-osint)](https://pypi.org/project/footprint-osint/)
+[![Python](https://img.shields.io/pypi/pyversions/footprint-osint)](https://pypi.org/project/footprint-osint/)
+[![License](https://img.shields.io/github/license/BillyBobMcgee/footprint-osint)](LICENSE)
+
 Check what an email, password, domain, or username exposes: public breach data,
 leak indexes, public profiles. Then score it and say what to fix.
 
 Works with **no API keys**. There's a CLI and a local web GUI.
 
 ```bash
-pip install -e .
+pip install footprint-osint
 footprint gui                      # web interface
 footprint email you@example.com    # or the CLI
 footprint                          # or an interactive menu
 ```
+
+<!-- Screenshots: save them as docs/gui.png and docs/cli.png, then remove the comment markers.
+![The GUI results page](docs/gui.png)
+![CLI output with the exposure score](docs/cli.png)
+-->
+
+From source: `git clone https://github.com/BillyBobMcgee/footprint-osint && cd footprint-osint && pip install -e .`
 
 ## Authorized use only
 
