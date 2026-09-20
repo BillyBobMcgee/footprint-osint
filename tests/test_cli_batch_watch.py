@@ -13,7 +13,7 @@ def isolated_state(tmp_path, monkeypatch):
     """Keep the watch database out of the user's real config directory.
 
     storage.py does ``from footprint.config import config_dir``, so it holds its
-    own reference — patching ``footprint.config.config_dir`` alone would leave
+    own reference. Patching ``footprint.config.config_dir`` alone would leave
     these tests reading and writing the real watchlist.
     """
     monkeypatch.setattr("footprint.storage.config_dir", lambda: tmp_path)
@@ -43,7 +43,7 @@ def _stub_profiles(monkeypatch, mapping):
     )
 
 
-# --------------------------------------------------------------------- batch
+# --- batch
 
 def test_batch_reports_each_address_and_exits_found(tmp_path, monkeypatch, capsys):
     _stub_profiles(monkeypatch, {"dirty@example.com": [_breach()]})
@@ -103,7 +103,7 @@ def test_batch_empty_file_is_a_usage_error(tmp_path):
     assert main(["batch", str(listing)]) == EXIT_USAGE
 
 
-# --------------------------------------------------------------------- watch
+# --- watch
 
 def test_watch_add_list_remove(capsys):
     main(["watch", "add", "me@example.com"])
@@ -169,7 +169,7 @@ def test_fingerprints_are_stable_across_runs():
     assert storage.fingerprints(profile) == storage.fingerprints(profile)
 
 
-# ------------------------------------------------------------------ webhooks
+# --- webhooks
 
 DISCORD = "https://discord.com/api/webhooks/123456789012345678/AbCdEfGhIjKlMnOp"
 
@@ -310,7 +310,7 @@ def test_a_failing_webhook_does_not_change_the_exit_code(monkeypatch, capsys):
     assert "webhook" in capsys.readouterr().err
 
 
-# --------------------------------------------- automatic webhook delivery
+# --- automatic webhook delivery
 
 @responses.activate
 def test_an_email_check_delivers_without_any_flag(monkeypatch):
@@ -348,7 +348,8 @@ def test_no_notify_suppresses_a_single_scan(monkeypatch):
 
 
 @responses.activate
-def test_a_password_check_delivers_its_verdict_only():
+def test_a_password_check_delivers_the_password_with_its_verdict():
+    """A verdict with no password is unreadable in a channel of them."""
     import hashlib
 
     from footprint.sources.pwned_passwords import RANGE_URL
@@ -363,7 +364,7 @@ def test_a_password_check_delivers_its_verdict_only():
     posted = [c for c in responses.calls if c.request.method == "POST"]
     assert len(posted) == 1
     body = json.dumps(json.loads(posted[0].request.body))
-    assert "hunter2" not in body          # never the password itself
+    assert "hunter2" in body
     assert "Compromised" in body
 
 
@@ -374,3 +375,26 @@ def test_scans_stay_quiet_when_no_webhook_is_configured(capsys):
     assert Config.resolve().webhooks == []
     main(["webhook", "list"])
     assert "no webhooks" in capsys.readouterr().out
+
+
+def test_interactive_watch_check_honours_the_stored_kind(monkeypatch):
+    """The menu used to scan every watched subject as an email."""
+    from footprint import interactive
+    from footprint.config import Config
+
+    storage.add_to_watchlist("example.com", "domain")
+    storage.add_to_watchlist("a@example.com", "email")
+    scanned = []
+
+    def record(kind):
+        def run(subject, config, **kw):
+            scanned.append((kind, subject))
+            return aggregate.Profile(subject=subject, kind=kind)
+        return run
+
+    monkeypatch.setattr("footprint.aggregate.domain_profile", record("domain"))
+    monkeypatch.setattr("footprint.aggregate.email_profile", record("email"))
+
+    interactive._run_watch_check(Config())
+
+    assert scanned == [("domain", "example.com"), ("email", "a@example.com")]

@@ -13,6 +13,7 @@ looked up by hash.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,9 @@ class BulkResult:
     detail: str = ""
     payload: dict[str, Any] | None = None   # None when there is no report
     error: str | None = None
+    # Password runs only. Deliberately absent from to_dict(), so it reaches a
+    # webhook message and nothing else.
+    secret: str | None = None
 
 
 @dataclass
@@ -68,7 +72,7 @@ class BulkRun:
         }
 
 
-# ------------------------------------------------------------------ detection
+# --- detection
 
 def detect_kind(value: str) -> str:
     """Classify one line. Passwords are never guessed; they must be forced."""
@@ -80,7 +84,7 @@ def detect_kind(value: str) -> str:
     return "username"
 
 
-# --------------------------------------------------------------------- input
+# --- input
 
 def parse_subjects(text: str, kind: str) -> list[tuple[str, str]]:
     """Split raw text into (label, value) pairs: one subject per line.
@@ -111,11 +115,11 @@ def load_subjects(path: Path, kind: str) -> list[tuple[str, str]]:
 
 def detect_kind_for(rows: list[tuple[str, str]]) -> str:
     """Classify a whole file by majority, so one odd line does not decide it."""
-    votes = [detect_kind(value) for _, value in rows]
-    return max(set(votes), key=votes.count) if votes else "email"
+    votes = Counter(detect_kind(value) for _, value in rows)
+    return max(votes, key=lambda k: (votes[k], k)) if votes else "email"
 
 
-# ------------------------------------------------------------------- running
+# --- running
 
 def _scan_one(label: str, value: str, kind: str, config: Config) -> BulkResult:
     try:
@@ -145,6 +149,9 @@ def _scan_one(label: str, value: str, kind: str, config: Config) -> BulkResult:
     except Exception as exc:  # noqa: BLE001 - one bad subject must not stop the run
         return BulkResult(label=label, kind=kind, error=f"unexpected error: {exc}")
 
+    if profile.failed:
+        return BulkResult(label=label, kind=kind, error=profile.failed)
+
     risk = profile.sections.get("risk")
     score = getattr(risk, "score", 0)
     counts = len(profile.sections.get("breaches") or []) + \
@@ -164,29 +171,26 @@ def _run_passwords(rows: list[tuple[str, str]], config: Config) -> BulkRun:
     exposures = pwned_passwords.check_many(secrets, config)
 
     # Reuse is a local computation and costs nothing extra to surface.
+    digests = [pwned_passwords.sha1_hex(value) for _, value in rows]
     seen: dict[str, list[str]] = {}
-    for label, value in rows:
-        seen.setdefault(pwned_passwords.sha1_hex(value), []).append(label)
+    for (label, _), digest in zip(rows, digests):
+        seen.setdefault(digest, []).append(label)
 
-    for label, value in rows:
-        digest = pwned_passwords.sha1_hex(value)
+    for (label, value), digest in zip(rows, digests):
         exposure = exposures.get(digest)
         reused = len(seen.get(digest, [])) > 1
         count = exposure.count if exposure else 0
 
+        score = scoring.password_score(count, reused)
         if count:
-            # Anything in the corpus is burned, but a top-1000 password is a
-            # different class of problem.
-            score = 95 if count >= 10000 else 80 if count >= 100 else 65
             detail = f"seen {count:,}x" + (" · reused" if reused else "")
         else:
-            score = 25 if reused else 0
             detail = "reused across entries" if reused else "not found"
 
         run.results.append(BulkResult(
             label=label, kind="password", score=score,
             risk=scoring.label_for(score), exposed=bool(count) or reused,
-            detail=detail,
+            detail=detail, secret=value,
         ))
 
     dupes = sum(1 for v in seen.values() if len(v) > 1)
@@ -201,22 +205,41 @@ def run(
     config: Config,
     *,
     workers: int = 4,
+    on_start: Callable[[str], None] | None = None,
     on_result: Callable[[BulkResult], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> BulkRun:
-    """Scan every subject. Returns results in input order."""
+    """Scan every subject. Returns results in input order.
+
+    `on_start` fires with a label as its scan begins and `on_result` when it
+    finishes, so a caller can show what is in flight rather than only what is
+    already done.
+    """
     if kind == "password":
+        # Passwords are checked in one batched call, so they all start together.
+        if on_start:
+            for label, _ in rows:
+                on_start(label)
         run_ = _run_passwords(rows, config)
         if on_result:
             for r in run_.results:
                 on_result(r)
         return run_
 
+    def scan(label: str, value: str) -> BulkResult:
+        # Everything is queued up front, so a stop is honoured by the subjects
+        # that have not started yet.
+        if should_stop and should_stop():
+            return BulkResult(label=label, kind=kind, error="stopped")
+        if on_start:
+            on_start(label)
+        return _scan_one(label, value, kind, config)
+
     run_ = BulkRun(kind=kind)
     # Each subject already fans out internally, so keep outer concurrency low
     # rather than opening a hundred sockets against the same APIs.
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = [pool.submit(_scan_one, label, value, kind, config)
-                   for label, value in rows]
+        futures = [pool.submit(scan, label, value) for label, value in rows]
         for future in futures:
             result = future.result()
             run_.results.append(result)

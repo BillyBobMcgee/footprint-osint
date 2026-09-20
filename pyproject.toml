@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "footprint-osint"
-version = "0.3.0"
+version = "1.0.0"
 description = "A defensive OSINT tool — CLI and local web GUI — for checking email, password, domain, and username exposure across public breach data sources."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "footprint contributors" }]
 keywords = ["osint", "security", "breach", "opsec", "cli", "gui", "hibp", "exposure", "dmarc", "subdomain-takeover"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Environment :: Web Environment",
     "Intended Audience :: Information Technology",
@@ -27,7 +27,6 @@ classifiers = [
 dependencies = [
     "requests>=2.28",
     "rich>=13.0",
-    "PySocks>=1.7",  # enables --tor SOCKS5 routing
 ]
 
 [project.optional-dependencies]

@@ -3,7 +3,7 @@
 Each source runs in isolation: a missing key or an error becomes a note and the
 rest still run.
 
-Sources run concurrently — they are independent calls to different hosts, so a
+Sources run concurrently. They are independent calls to different hosts, so a
 profile costs roughly one round-trip instead of eight. Results are assembled in
 a fixed order so output stays deterministic, and base.fetch keeps its own
 per-host rate limiting so this never turns into hammering one API.
@@ -30,7 +30,7 @@ from footprint.sources import (
     intelx,
     xposedornot,
 )
-from footprint.sources.base import SourceError
+from footprint.sources.base import SourceError, Unreachable
 
 # Called as progress(label, status) where status is "start" | "ok" | "skip".
 Progress = Callable[[str, str], None]
@@ -43,6 +43,9 @@ class Profile:
     sections: dict[str, Any] = field(default_factory=dict)
     timeline: list[TimelineEvent] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Set when nothing could be reached, so the result is a failure rather
+    # than a clean bill of health.
+    failed: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         def conv(v):
@@ -58,6 +61,7 @@ class Profile:
             "sections": {k: conv(v) for k, v in self.sections.items()},
             "timeline": [e.to_dict() for e in self.timeline],
             "notes": self.notes,
+            "failed": self.failed,
         }
 
 
@@ -68,6 +72,8 @@ class _Runner:
         self.profile = profile
         self.progress = progress
         self._lock = Lock()
+        self.reached = 0        # sources that answered
+        self.unreachable: list[str] = []
 
     def _note(self, message: str) -> None:
         with self._lock:
@@ -84,6 +90,12 @@ class _Runner:
         self._emit(label, "start")
         try:
             value = fn()
+        except Unreachable as exc:
+            with self._lock:
+                self.unreachable.append(label)
+            self._note(f"{label}: {exc}")
+            self._emit(label, "skip")
+            return None
         except SourceError as exc:
             self._note(f"{label}: {exc}")
             self._emit(label, "skip")
@@ -92,8 +104,17 @@ class _Runner:
             self._note(f"{label}: unexpected error ({exc})")
             self._emit(label, "skip")
             return None
+        with self._lock:
+            self.reached += 1
         self._emit(label, "ok")
         return value
+
+    def verdict(self) -> str | None:
+        """A failure reason when no source answered, else None."""
+        if self.reached or not self.unreachable:
+            return None
+        return (f"could not reach any source ({len(self.unreachable)} tried). "
+                "Nothing was checked, so this is not a clean result.")
 
     def run_all(self, tasks: dict[str, Callable[[], Any]]) -> dict[str, Any]:
         """Run every task concurrently; returns {label: result-or-None}."""
@@ -123,16 +144,15 @@ def email_profile(
         "Gravatar": lambda: gravatar.lookup(email, config),
     }
     # Registered-account discovery (keyless), only if holehe is installed.
-    if holehe_scan.available():
+    has_holehe = holehe_scan.available()
+    if has_holehe:
         tasks["holehe"] = lambda: holehe_scan.scan(email, config)
 
     got = runner.run_all(tasks)
 
-    if not holehe_scan.available():
-        p.notes.append(
-            "holehe not installed — `pip install holehe` to discover "
-            "registered accounts (keyless)."
-        )
+    if not has_holehe:
+        p.notes.append("holehe not installed, run `pip install holehe` for "
+                       "registered-account discovery.")
 
     # Assemble in a fixed order so output stays deterministic.
     breaches = got.get("HIBP breaches")
@@ -176,7 +196,9 @@ def email_profile(
             p.timeline.append(TimelineEvent(m.date, "darkweb", m.name, "IntelX"))
 
     p.timeline.sort(key=lambda e: e.date or "", reverse=True)
-    p.sections["risk"] = scoring.assess_email(p.sections)
+    p.failed = runner.verdict()
+    if not p.failed:
+        p.sections["risk"] = scoring.assess_email(p.sections)
     return p
 
 
@@ -210,5 +232,7 @@ def domain_profile(
             p.timeline.append(TimelineEvent(b.breach_date, "breach", b.title, "HIBP"))
 
     p.timeline.sort(key=lambda e: e.date or "", reverse=True)
-    p.sections["risk"] = scoring.assess_domain(p.sections)
+    p.failed = runner.verdict()
+    if not p.failed:
+        p.sections["risk"] = scoring.assess_domain(p.sections)
     return p

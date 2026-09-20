@@ -19,7 +19,7 @@ def _mock_range(password, count):
                   body=f"{d[5:]}:{count}\n")
 
 
-# ----------------------------------------------------------------- detection
+# --- detection
 
 @pytest.mark.parametrize("value,expected", [
     ("you@example.com", "email"),
@@ -34,12 +34,12 @@ def test_detect_kind(value, expected):
 
 
 def test_passwords_are_never_auto_detected():
-    """Guessing a line is a password would be unsafe — it must be explicit."""
+    """Guessing a line is a password would be unsafe, it must be explicit."""
     assert bulk.detect_kind("hunter2") == "username"
     assert "password" not in {bulk.detect_kind(v) for v in ("a@b.com", "x.com", "pw")}
 
 
-# --------------------------------------------------------------------- input
+# --- input
 
 def test_load_subjects_skips_blanks_and_comments(tmp_path):
     f = tmp_path / "in.txt"
@@ -61,7 +61,7 @@ def test_password_list_is_labelled_by_line_not_by_secret(tmp_path):
 def test_every_non_blank_line_is_a_password(tmp_path):
     """No comment syntax here: '#pass' is a valid password, not a comment.
 
-    Blanks are skipped but do not shift the numbering — the label points at the
+    Blanks are skipped but do not shift the numbering. The label points at the
     real line in the file, so you can go straight to it.
     """
     f = tmp_path / "pw.txt"
@@ -82,7 +82,7 @@ def test_a_comma_separated_line_is_one_password(tmp_path):
     assert rows == [("line 1", "password,with,commas"), ("line 2", "hunter2")]
 
 
-# ----------------------------------------------------------------- passwords
+# --- passwords
 
 @responses.activate
 def test_bulk_passwords_report_labels_never_secrets():
@@ -152,7 +152,7 @@ def test_passwords_produce_no_per_subject_report():
     assert all(r.payload is None for r in run.results)
 
 
-# ---------------------------------------------------------------- usernames
+# --- usernames
 
 def test_username_scoring_rises_with_reach():
     few = scoring.assess_username([SiteHit("GitHub", "u", True)])
@@ -164,17 +164,23 @@ def test_username_scoring_rises_with_reach():
 def test_username_not_found_anywhere_scores_zero():
     a = scoring.assess_username([SiteHit("GitHub", "u", False)])
     assert a.score == 0
-    assert any("not widely reused" in x.title for x in a.actions)
+    assert any(x.title == "Nothing" for x in a.actions)
 
 
-def test_sensitive_sites_dominate_the_username_score():
-    plain = scoring.assess_username([SiteHit("Goodreads", "u", True)])
-    sensitive = scoring.assess_username([SiteHit("FetLife", "u", True)])
+def test_sensitive_categories_dominate_the_username_score():
+    plain = scoring.assess_username([SiteHit("Goodreads", "u", True, "hobby")])
+    sensitive = scoring.assess_username([SiteHit("FetLife", "u", True, "xx NSFW xx")])
     assert sensitive.score > plain.score
     assert any("would not want linked" in x.title for x in sensitive.actions)
 
 
-# ------------------------------------------------------- domain watch alerts
+def test_a_site_is_judged_by_its_category_not_its_name():
+    """A keyword match on the name used to call "adultism" an adult site."""
+    a = scoring.assess_username([SiteHit("adultism", "u", True, "blog")])
+    assert not any("sensitive" in f.reason for f in a.factors)
+
+
+# --- domain watch alerts
 
 def test_takeover_is_fingerprinted_for_watch():
     from footprint import aggregate
@@ -216,7 +222,7 @@ def test_dmarc_regression_reads_as_a_new_finding():
     assert fp("none") != set()
 
 
-# ------------------------------------------------- shared text parsing
+# --- shared text parsing
 
 def test_parse_subjects_matches_load_subjects(tmp_path):
     """GUI (text) and CLI (file) must produce identical rows."""

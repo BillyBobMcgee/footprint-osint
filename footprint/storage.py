@@ -7,6 +7,7 @@ what is *new* since last time. Backed by SQLite in the config directory.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -29,7 +30,75 @@ def _connect() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS watchlist ("
         "subject TEXT PRIMARY KEY, kind TEXT NOT NULL, added REAL NOT NULL)"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL, "
+        "kind TEXT NOT NULL, score INTEGER, label TEXT, created REAL NOT NULL, "
+        "payload TEXT NOT NULL)"
+    )
     return conn
+
+
+# --- scan history
+
+HISTORY_LIMIT = 200
+
+
+def record_scan(subject: str, kind: str, payload: dict) -> int | None:
+    """Save a finished scan so the GUI can reopen it without re-running it."""
+    risk = (payload.get("sections") or {}).get("risk") or {}
+    try:
+        with _connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO history (subject, kind, score, label, created, payload) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (subject, kind, int(risk.get("score", 0) or 0),
+                 str(risk.get("label", "") or ""), time.time(),
+                 json.dumps(payload, default=str)),
+            )
+            conn.execute(
+                "DELETE FROM history WHERE id NOT IN "
+                "(SELECT id FROM history ORDER BY id DESC LIMIT ?)",
+                (HISTORY_LIMIT,),
+            )
+            return cur.lastrowid
+    except (sqlite3.Error, TypeError, ValueError):
+        return None
+
+
+def history(limit: int = 30) -> list[dict]:
+    """Recent scans, newest first, without their payloads."""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT id, subject, kind, score, label, created FROM history "
+                "ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [{"id": r[0], "subject": r[1], "kind": r[2], "score": r[3],
+             "label": r[4], "created": r[5]} for r in rows]
+
+
+def history_payload(entry_id: int) -> dict | None:
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM history WHERE id = ?", (entry_id,)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+    except (sqlite3.Error, json.JSONDecodeError):
+        return None
+
+
+def clear_history() -> int:
+    try:
+        with _connect() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+            conn.execute("DELETE FROM history")
+            return int(n)
+    except sqlite3.Error:
+        return 0
 
 
 def add_to_watchlist(subject: str, kind: str) -> None:

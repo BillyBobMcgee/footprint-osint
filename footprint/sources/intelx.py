@@ -2,7 +2,7 @@
 
 This queries an index that has already crawled leak sites, pastes, and
 dark-web sources, and reports which entries *reference* a search term. It
-returns catalog metadata only (source bucket, date, item name) — footprint
+returns catalog metadata only (source bucket, date, item name), so footprint
 never downloads or displays the leaked file contents.
 
 Requires an Intelligence X API key.

@@ -1,4 +1,4 @@
-"""Shared HTTP plumbing: retries, Tor routing, rate limiting, and caching."""
+"""Shared HTTP plumbing: retries, rate limiting, and caching."""
 
 from __future__ import annotations
 
@@ -26,6 +26,15 @@ class RateLimitError(SourceError):
     """Raised specifically when a source reports HTTP 429."""
 
 
+class Unreachable(SourceError):
+    """Raised when the host could not be contacted at all.
+
+    Kept distinct from a missing API key: one means the scan did not happen,
+    the other means one source was skipped. Reporting both the same way is how
+    a scan that reached nothing ends up looking like a clean result.
+    """
+
+
 @dataclass
 class HttpResult:
     status_code: int
@@ -36,13 +45,17 @@ class HttpResult:
         return json.loads(self.text) if self.text else None
 
 
-# Per-host last-call timestamps so we can honor minimum intervals politely.
-_last_call: dict[str, float] = {}
+# Per-host next-free slot, so minimum intervals are honored politely.
+_next_slot: dict[str, float] = {}
 _rate_lock = threading.Lock()
+
+# One session per thread, reused across calls. Building a fresh one per request
+# meant a new TLS handshake every time, which dominated DNS-heavy scans.
+_local = threading.local()
 
 
 def build_session(config: Config) -> requests.Session:
-    """A session with retry/backoff and optional Tor proxying."""
+    """A session with retry/backoff."""
     session = requests.Session()
     retry = Retry(
         total=config.max_retries,
@@ -57,20 +70,35 @@ def build_session(config: Config) -> requests.Session:
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     session.headers.update({"User-Agent": config.user_agent})
-    if config.proxies:
-        session.proxies.update(config.proxies)
     return session
 
 
+def pooled_session(config: Config) -> requests.Session:
+    """The calling thread's shared session, rebuilt if the config changed."""
+    signature = (config.user_agent, config.max_retries)
+    if getattr(_local, "signature", None) != signature:
+        old = getattr(_local, "session", None)
+        if old is not None:
+            old.close()
+        _local.session = build_session(config)
+        _local.signature = signature
+    return _local.session
+
+
 def _respect_rate(host: str, min_interval: float) -> None:
+    """Space calls to one host apart without stalling calls to any other.
+
+    The slot is claimed under the lock and slept on outside it, so a slow host
+    cannot hold up every other source running alongside it.
+    """
     if min_interval <= 0:
         return
     with _rate_lock:
-        last = _last_call.get(host, 0.0)
-        wait = min_interval - (time.time() - last)
-        if wait > 0:
-            time.sleep(wait)
-        _last_call[host] = time.time()
+        now = time.monotonic()
+        slot = max(now, _next_slot.get(host, 0.0))
+        _next_slot[host] = slot + min_interval
+    if slot > now:
+        time.sleep(slot - now)
 
 
 def _cache_key(method: str, url: str, headers: dict | None, body: str | None) -> str:
@@ -93,14 +121,15 @@ def fetch(
     min_interval: float = 0.0,
     session: requests.Session | None = None,
     source: str = "source",
-    timeout: float | None = None,
+    timeout: float | tuple[float, float] | None = None,
     data: dict[str, str] | None = None,
     files: dict[str, tuple] | None = None,
 ) -> HttpResult:
     """Perform an HTTP request with caching, rate limiting, and error mapping.
 
-    `timeout` overrides the default for one call; some public endpoints (crt.sh
-    especially) are slow enough that the default cuts them off.
+    `timeout` overrides the default for one call, as seconds or a
+    (connect, read) pair; some public endpoints (crt.sh especially) are slow
+    enough that the default cuts them off.
 
     `data`/`files` send multipart instead of JSON, which is how Discord takes a
     file alongside an embed. Multipart requests are never cached.
@@ -117,8 +146,7 @@ def fetch(
         if cached is not None:
             return HttpResult(status_code=200, text=cached, headers={"x-cache": "hit"})
 
-    own_session = session is None
-    sess = session or build_session(config)
+    sess = session or pooled_session(config)
     host = urlsplit(url).netloc
     _respect_rate(host, min_interval)
 
@@ -133,10 +161,7 @@ def fetch(
             timeout=config.timeout if timeout is None else timeout,
         )
     except requests.RequestException as exc:  # pragma: no cover - network
-        raise SourceError(f"{source} request failed: {exc}") from exc
-    finally:
-        if own_session:
-            sess.close()
+        raise Unreachable(f"cannot reach {host}") from exc
 
     if resp.status_code == 429:
         retry_after = resp.headers.get("retry-after", "?")

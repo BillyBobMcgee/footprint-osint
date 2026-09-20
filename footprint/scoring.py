@@ -3,8 +3,7 @@
 No network calls and no key: this works from data the sources already returned
 and turns it into a 0-100 score plus concrete steps.
 
-The score is additive and explainable rather than a black box — `factors`
-always accounts for every point.
+The score is additive: `factors` accounts for every point.
 """
 
 from __future__ import annotations
@@ -15,54 +14,97 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Any
 
-# --------------------------------------------------------------- data classes
+# --- data classes
 
 # Breach "data classes" are free text and vary by source ("Passwords" from
-# HIBP, "passwords" from XposedOrNot, "Password hashes"...), so match on
-# lowercased substrings and keep the highest tier that hits.
-_CRITICAL = (
-    "password", "hash", "social security", "ssn", "credit card", "bank",
-    "financial", "payment", "passport", "government id", "national id",
-    "driver", "security question", "security answer", "private key",
-    "auth token", "access token", "session token", "biometric", "tax",
-    "maiden name",
-)
-_HIGH = (
-    "physical address", "home address", "mailing address", "street address",
-    "postal", "phone", "date of birth", "dob", "geographic location",
-    "geolocation", "health", "medical", "income", "salary", "employer",
-    "employment", "family", "spouse",
-)
-
-# "Email addresses" and "IP addresses" contain "address" but are nowhere near
-# as sensitive as a home address, so check these first.
-_NOT_PHYSICAL = ("email", "ip address", "e-mail")
+# HIBP, "passwords" from XposedOrNot, "Password hashes"...). Keywords match at
+# a word start, so "password" catches "Passwords" without "pin" catching
+# "shipping".
+_CRITICAL = {
+    # Points for this class on its own. A leaked password is the whole game;
+    # a leaked maiden name is one answer in a reset flow.
+    "password": 32, "hash": 32, "mnemonic": 32, "seed phrase": 32,
+    "private key": 28,
+    "social security": 26, "ssn": 26, "national insurance": 26,
+    "bank account": 24, "credit card": 24, "cvv": 24, "payment method": 24,
+    "passport": 22, "government": 22, "national id": 22, "biometric": 22,
+    "encrypted key": 22, "auth token": 22, "access token": 22,
+    "session token": 22, "api key": 22,
+    "pin": 20, "driver": 20,
+    "account balance": 18, "security question": 18, "security answer": 18,
+    "tax": 16, "maiden name": 12,
+}
+_HIGH = {
+    # health
+    "hiv": 14, "health": 14, "medical": 14, "disabilit": 12,
+    "drug habit": 8, "smoking habit": 8, "drinking habit": 8,
+    # who you are
+    "sexual orientation": 14, "sexual fetish": 14, "religio": 12,
+    "political": 12, "ethnic": 12, "race": 12, "nationalit": 10,
+    "citizenship": 10, "birth": 11,
+    "marital status": 7, "relationship status": 7, "spouse": 7, "family": 7,
+    "parenting": 7,
+    # private content
+    "private message": 11, "sms message": 11, "chat log": 11,
+    "audio recording": 11, "browsing histor": 8, "login histor": 8,
+    # where you live and how to reach you
+    "physical address": 10, "home address": 10, "mailing address": 10,
+    "street address": 10, "postal": 7, "latitude": 10,
+    "geographic location": 10, "geolocation": 10, "travel plan": 8,
+    "phone": 9, "telecommunications carrier": 6, "address book": 8,
+    "social connection": 8,
+    # money and work
+    "cryptocurrency": 12, "credit score": 9, "credit status": 9,
+    "financial": 9, "net worth": 9, "income": 9, "earning": 9, "salary": 9,
+    "loan": 9, "socioeconomic": 9, "living cost": 7, "payment histor": 9,
+    "utility bill": 7, "employer": 6, "employment": 6, "occupation": 6,
+    "military service": 6, "academic record": 5, "school grade": 5,
+    # identifiers that follow you offline
+    "imei": 6, "imsi": 6, "mac address": 6, "licence plate": 6,
+    "license plate": 6, "registration plate": 6, "vehicle identification": 6,
+    "vin": 6,
+}
 _MEDIUM = (
     "email", "username", "name", "ip address", "gender", "job title",
-    "device", "browser", "avatar", "profile photo", "social media profile",
+    "device", "browser", "avatar", "photo", "social media profile", "bio",
+    "age", "time zone", "spoken language", "education level", "homepage url",
+    "personal interest", "nickname", "instant messenger", "physical attribute",
+    "personal description",
 )
 
 SEVERITY = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+_TIERS = tuple(
+    (tier, re.compile(r"\b(?:" + "|".join(words) + r")"))
+    for tier, words in (("critical", _CRITICAL), ("high", _HIGH), ("medium", _MEDIUM))
+)
+_WEIGHTED = tuple(
+    (re.compile(r"\b(?:" + needle + r")"), points)
+    for table in (_CRITICAL, _HIGH)
+    for needle, points in table.items()
+)
 
 
 def classify_data(label: str) -> str:
     """Bucket one breach data-class label into critical/high/medium/low."""
     text = label.strip().lower()
-    for needle in _CRITICAL:
-        if needle in text:
-            return "critical"
-    if any(n in text for n in _NOT_PHYSICAL):
-        return "medium"
-    for needle in _HIGH:
-        if needle in text:
-            return "high"
-    for needle in _MEDIUM:
-        if needle in text:
-            return "medium"
+    for tier, pattern in _TIERS:
+        if pattern.search(text):
+            return tier
     return "low"
 
 
-# ------------------------------------------------------------------- results
+def data_weight(label: str) -> int:
+    """What one leaked class is worth, by the damage it actually enables.
+
+    A label can match more than one keyword ("Password hashes"), so the worst
+    match wins.
+    """
+    text = label.strip().lower()
+    return max((pts for rx, pts in _WEIGHTED if rx.search(text)), default=0)
+
+
+# --- results
 
 @dataclass
 class Factor:
@@ -106,6 +148,14 @@ class Assessment:
         }
 
 
+def password_score(count: int, reused: bool = False) -> int:
+    """Score one password. Anything in the corpus is burned, but a top-1000
+    password is a different class of problem."""
+    if count:
+        return 95 if count >= 10000 else 80 if count >= 100 else 65
+    return 25 if reused else 0
+
+
 def label_for(score: int) -> str:
     if score >= 80:
         return "Critical"
@@ -118,7 +168,7 @@ def label_for(score: int) -> str:
     return "Minimal"
 
 
-# -------------------------------------------------------------------- helpers
+# --- helpers
 
 def _parse_year(value: str | None) -> int | None:
     """Pull a year out of the many date shapes the sources return."""
@@ -137,15 +187,16 @@ def _years_since(value: str | None, today: date | None = None) -> float | None:
     for fmt, width in (("%Y-%m-%d", 10), ("%Y-%m", 7), ("%Y", 4)):
         try:
             when = datetime.strptime(text[:width], fmt).date()
-            return (now - when).days / 365.25
+            # A future date is bad upstream data, not a fresher breach.
+            return max((now - when).days / 365.25, 0.0)
         except ValueError:
             continue
     year = _parse_year(text)
-    return None if year is None else float(now.year - year)
+    return None if year is None else float(max(now.year - year, 0))
 
 
 def _all_breaches(sections: dict) -> list:
-    """HIBP and XposedOrNot overlap heavily — merge and de-duplicate by name."""
+    """HIBP and XposedOrNot overlap, so merge and de-duplicate by name."""
     merged: dict[str, Any] = {}
     for key in ("breaches", "xon_breaches"):
         for b in sections.get(key) or []:
@@ -164,7 +215,7 @@ def _data_classes(breaches: Iterable) -> list[str]:
     return seen
 
 
-# --------------------------------------------------------------------- assess
+# --- assess
 
 def assess_email(sections: dict, today: date | None = None) -> Assessment:
     """Score an email profile and produce remediation steps.
@@ -197,15 +248,17 @@ def assess_email(sections: dict, today: date | None = None) -> Assessment:
         ))
 
     # -- what actually leaked ----------------------------------------------
+    # The worst class sets the level and the rest adds on top, so one leaked
+    # password outweighs a long list of email addresses.
     if buckets.get("critical"):
-        names = sorted(buckets["critical"])
-        pts = min(10 + 4 * (len(names) - 1), 26)
+        names = sorted(buckets["critical"], key=data_weight, reverse=True)
+        pts = min(data_weight(names[0]) + 4 * (len(names) - 1), 44)
         a.factors.append(Factor(
             pts, f"critical data exposed: {', '.join(names[:4])}", "severe"
         ))
     if buckets.get("high"):
-        names = sorted(buckets["high"])
-        pts = min(5 + 2 * (len(names) - 1), 14)
+        names = sorted(buckets["high"], key=data_weight, reverse=True)
+        pts = min(data_weight(names[0]) + 2 * (len(names) - 1), 22)
         a.factors.append(Factor(
             pts, f"identity data exposed: {', '.join(names[:4])}", "caution"
         ))
@@ -269,88 +322,82 @@ def _email_actions(buckets, breaches, accounts, leaks, pastes) -> list[Action]:
     actions: list[Action] = []
     critical = " ".join(buckets.get("critical", [])).lower()
     high = " ".join(buckets.get("high", [])).lower()
-    names = [getattr(b, "title", "") or getattr(b, "name", "") for b in breaches]
 
     if "password" in critical or "hash" in critical:
-        where = ", ".join(n for n in names[:3] if n) or "the affected sites"
+        # Name the breaches that actually leaked one, not the first three found.
+        leaked_here = [
+            getattr(b, "title", "") or getattr(b, "name", "")
+            for b in breaches
+            if any("password" in c.lower() or "hash" in c.lower()
+                   for c in (getattr(b, "data_classes", None) or []))
+        ]
+        where = ", ".join(n for n in leaked_here[:3] if n) or "the affected sites"
         actions.append(Action(
             1, "Rotate the exposed passwords",
-            f"A password or password hash leaked in {where}. Change it there, and "
-            "anywhere you reused it — cracked hashes get replayed against other "
-            "sites first. A password manager makes each one unique.",
+            f"Leaked in {where}. Change it there and anywhere you reused it.",
         ))
-    if "private key" in critical or "token" in critical:
+    if "mnemonic" in critical or "seed phrase" in critical:
+        actions.append(Action(
+            1, "Move your crypto to a new wallet",
+            "A leaked seed phrase gives away every key derived from it.",
+        ))
+    if any(k in critical for k in ("private key", "encrypted key", "token")):
         actions.append(Action(
             2, "Revoke exposed keys and tokens",
-            "Assume any leaked key or session token is live. Revoke and reissue it; "
-            "rotating without revoking leaves the old one working.",
+            "Revoke, don't just rotate. The old one still works otherwise.",
         ))
     if accounts:
         actions.append(Action(
             2, f"Turn on 2FA across {len(accounts)} confirmed account(s)",
-            "These sites are confirmed to have an account on this address, so they "
-            "are the exact list an attacker would work through first. App-based or "
-            "hardware 2FA blocks a working password.",
+            "These are the accounts an attacker would try first.",
         ))
     if any(k in critical for k in ("social security", "ssn", "tax", "national id",
-                                   "passport", "government id", "driver")):
+                                   "passport", "government", "driver")):
         actions.append(Action(
             3, "Freeze your credit",
-            "Government identifiers were in a breach. A credit freeze at each bureau "
-            "is free and reversible, and stops new accounts being opened in your name.",
+            "Government IDs leaked. A freeze is free and blocks new accounts.",
         ))
     if any(k in critical for k in ("credit card", "bank", "financial", "payment")):
         actions.append(Action(
             3, "Replace the affected card or account number",
-            "Financial data was exposed. Turn on transaction alerts and ask the "
-            "issuer for a new number rather than waiting for fraud to show up.",
+            "Ask the issuer for a new number; don't wait for fraud.",
         ))
     if "security question" in critical or "security answer" in critical or \
             "maiden name" in critical:
         actions.append(Action(
             4, "Reset your security questions",
-            "Answers leaked in plaintext, and unlike a password they are facts you "
-            "cannot change. Replace them with random strings kept in your password "
-            "manager.",
+            "Answers leaked. Replace them with random strings.",
         ))
     if "phone" in high:
         actions.append(Action(
             5, "Add a port-out PIN with your carrier",
-            "Your number leaked, which is the first ingredient in a SIM swap. A "
-            "carrier PIN blocks the transfer, and moving off SMS 2FA removes the prize.",
+            "Your number leaked, that's step one of a SIM swap.",
         ))
-    if any(k in high for k in ("address", "date of birth", "dob")):
+    if any(k in high for k in ("address", "birth")):
         actions.append(Action(
-            6, "Treat identity-verification questions as compromised",
-            "Address and date of birth are exactly what call-centre identity checks "
-            "ask for, and they are now public. Prefer providers that verify with a "
-            "PIN or an app instead.",
+            6, "Treat identity checks as compromised",
+            "Your address and date of birth are what call centres ask for.",
         ))
     if leaks or pastes:
         actions.append(Action(
             7, "Expect targeted phishing, not generic spam",
-            "This address appears in leak indexes or public pastes, so it is already "
-            "circulating in aggregated lists — expect mail that quotes real details "
-            "back at you to establish trust.",
+            "This address is circulating in aggregated lists.",
         ))
     if not actions and breaches:
         actions.append(Action(
             5, "Rotate credentials as a precaution",
-            "The breaches found did not name a specific sensitive field, but this "
-            "address is confirmed in a leaked dataset. Rotating is cheap.",
+            "No specific field was named, but the address is in a leaked set.",
         ))
     if not breaches and not leaks:
         actions.append(Action(
-            9, "Nothing to remediate — keep it that way",
-            "No exposure surfaced in the sources that ran. Absence of evidence is "
-            "not proof: add this address to the watchlist so new breaches surface "
-            "on their own.",
+            9, "Nothing",
+            "Add it to the watchlist to catch anything new.",
         ))
     actions.sort(key=lambda x: x.priority)
     return actions
 
 
-# -------------------------------------------------------------------- domains
+# --- domains
 
 def assess_domain(sections: dict, today: date | None = None) -> Assessment:
     """Score a domain's email-security posture and exposed surface."""
@@ -362,7 +409,7 @@ def assess_domain(sections: dict, today: date | None = None) -> Assessment:
         spf = getattr(recon, "spf", None)
         if not spf:
             a.factors.append(Factor(
-                14, "no SPF record — anyone may spoof this domain", "severe"
+                14, "no SPF record, anyone may spoof this domain", "severe"
             ))
         elif "+all" in spf:
             a.factors.append(Factor(
@@ -373,7 +420,7 @@ def assess_domain(sections: dict, today: date | None = None) -> Assessment:
         policy = (getattr(recon, "dmarc_policy", None) or "").lower()
         if not getattr(recon, "dmarc", None):
             a.factors.append(Factor(
-                16, "no DMARC record — spoofed mail is not rejected", "severe"
+                16, "no DMARC record, spoofed mail is not rejected", "severe"
             ))
         elif policy == "none":
             a.factors.append(Factor(
@@ -386,7 +433,7 @@ def assess_domain(sections: dict, today: date | None = None) -> Assessment:
             a.factors.append(Factor(5, "DNSSEC not enabled", "caution"))
         if not getattr(recon, "mta_sts", None):
             a.factors.append(Factor(
-                4, "no MTA-STS policy — SMTP can be downgraded in transit", "caution"
+                4, "no MTA-STS policy, SMTP can be downgraded in transit", "caution"
             ))
         if getattr(recon, "mx", None) and not getattr(recon, "dkim_selectors", None):
             a.factors.append(Factor(
@@ -429,79 +476,67 @@ def _domain_actions(recon) -> list[Action]:
         hosts = ", ".join(t.get("host", "?") for t in takeovers[:4])
         actions.append(Action(
             1, f"Remove {len(takeovers)} dangling DNS record(s)",
-            f"These names resolve to a service that no longer claims them: {hosts}. "
-            "Anyone can register the target and serve content on your domain. Delete "
-            "the record, or re-claim the resource.",
+            f"Anyone could claim {hosts} and serve content on your domain.",
         ))
     if not getattr(recon, "spf", None):
         actions.append(Action(
             2, "Publish an SPF record",
-            "Without SPF a receiving server has no way to tell your mail from a "
-            "forgery. List your real senders and end the record in -all.",
+            "List your real senders and end it in -all.",
         ))
     policy = (getattr(recon, "dmarc_policy", None) or "").lower()
     if not getattr(recon, "dmarc", None):
         actions.append(Action(
             2, "Publish a DMARC record",
-            "Start at p=none with an rua= address to collect reports, then move to "
-            "quarantine and finally reject once the reports look clean.",
+            "Start at p=none with rua=, then tighten once reports look clean.",
         ))
     elif policy in ("none", "quarantine"):
         actions.append(Action(
             3, f"Tighten DMARC from p={policy} to p=reject",
-            "The record exists but is not enforcing, so spoofed mail still lands. "
-            "Reject is the only policy that actually stops delivery.",
+            "Not enforcing, so spoofed mail still lands.",
         ))
     if not getattr(recon, "mta_sts", None):
         actions.append(Action(
             5, "Add MTA-STS and TLS-RPT",
-            "Without a policy an attacker in the network path can strip STARTTLS and "
-            "read mail in transit. MTA-STS pins TLS for senders that honour it.",
+            "Otherwise STARTTLS can be stripped in transit.",
         ))
     if not getattr(recon, "dnssec", False):
         actions.append(Action(
             6, "Enable DNSSEC",
-            "Signed responses stop a resolver being poisoned into pointing your "
-            "domain somewhere else.",
+            "Stops a resolver being poisoned to point elsewhere.",
         ))
     actions.sort(key=lambda x: x.priority)
     return actions
 
 
-# ------------------------------------------------------------------ usernames
+# --- usernames
 
-# Sites where a hit says more than a plain profile does, either because the
-# account is sensitive or because it ties the handle to a real identity.
-_SENSITIVE_SITES = (
-    "adult", "porn", "escort", "fetlife", "ashley", "onlyfans", "grindr",
-    "tinder", "okcupid", "match", "gambl", "casino", "poker", "bet",
-)
-_IDENTITY_SITES = (
-    "linkedin", "facebook", "github", "gitlab", "instagram", "venmo",
-    "paypal", "cash", "strava", "untappd", "spotify", "goodreads",
-)
+# WhatsMyName tags every site with a category. A hit in one of these says more
+# than a plain profile does: the first group is sensitive, the second usually
+# carries a real name.
+_SENSITIVE_CATS = ("xx nsfw xx", "dating", "health", "political")
+_IDENTITY_CATS = ("finance", "business")
+
+
+def _in_cats(hits, cats: tuple[str, ...]) -> list:
+    return [h for h in hits if getattr(h, "category", "").strip().lower() in cats]
 
 
 def assess_username(hits, today: date | None = None) -> Assessment:
     """Score how much a handle exposes by being reused across sites.
 
-    Not a breach score — nothing here is a compromise. This measures
-    linkability: one handle used everywhere lets anyone assemble a profile from
-    public pages alone.
+    Not a breach score, nothing here is a compromise. It measures linkability:
+    one handle used everywhere lets anyone assemble a profile from public pages
+    alone.
     """
     a = Assessment()
     found = [h for h in hits if getattr(h, "exists", False)]
     if not found:
         a.label = label_for(0)
         a.actions.append(Action(
-            9, "Nothing to do — this handle is not widely reused",
-            "The handle did not turn up on the sites checked, so there is no "
-            "obvious cross-site trail tied to it.",
+            9, "Nothing",
+            "This handle didn't turn up on the sites checked.",
         ))
         return a
-
-    names = [getattr(h, "site", "") for h in found]
-    lowered = " ".join(names).lower()
 
     a.factors.append(Factor(
         min(4 + 2 * len(found), 30),
@@ -509,15 +544,15 @@ def assess_username(hits, today: date | None = None) -> Assessment:
         "caution" if len(found) >= 10 else "info",
     ))
 
-    sensitive = [n for n in names if any(k in n.lower() for k in _SENSITIVE_SITES)]
+    sensitive = sorted(getattr(h, "site", "?") for h in _in_cats(found, _SENSITIVE_CATS))
     if sensitive:
         a.factors.append(Factor(
             min(10 * len(sensitive), 25),
-            f"present on sensitive site(s): {', '.join(sorted(sensitive)[:3])}",
+            f"present on sensitive site(s): {', '.join(sensitive[:3])}",
             "severe",
         ))
 
-    identity = [k for k in _IDENTITY_SITES if k in lowered]
+    identity = _in_cats(found, _IDENTITY_CATS)
     if len(identity) >= 2:
         a.factors.append(Factor(
             min(5 * len(identity), 20),
@@ -529,22 +564,17 @@ def assess_username(hits, today: date | None = None) -> Assessment:
 
     a.actions.append(Action(
         2, "Use a different handle where you want separation",
-        "A single handle is the easiest way to link accounts across sites. "
-        "Reusing it means anyone can walk from one profile to all the others.",
+        "One handle lets anyone walk from one profile to all the others.",
     ))
     if sensitive:
         a.actions.append(Action(
             1, "Rename the accounts you would not want linked",
-            "This handle appears on sites most people keep separate from their "
-            f"public identity ({', '.join(sorted(sensitive)[:3])}). Renaming "
-            "breaks the link that makes them findable together.",
+            f"Found on {', '.join(sensitive[:3])}.",
         ))
     if len(found) >= 10:
         a.actions.append(Action(
             3, "Prune the accounts you no longer use",
-            "Dormant profiles keep leaking old photos, bios, and contacts long "
-            "after you have stopped thinking about them. Deleting is the only "
-            "durable fix.",
+            "Dormant profiles keep leaking old photos, bios, and contacts.",
         ))
     a.actions.sort(key=lambda x: x.priority)
     return a

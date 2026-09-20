@@ -26,7 +26,6 @@ def test_analytics_parses_breaches_and_risk():
             },
         },
         status=200,
-        match_querystring=False,
     )
 
     breaches, risk = xposedornot.analytics("victim@example.com", Config())
@@ -47,7 +46,6 @@ def test_analytics_clean_email_returns_empty():
         "https://api.xposedornot.com/v1/breach-analytics",
         json={"Error": "Not found"},
         status=404,
-        match_querystring=False,
     )
     breaches, risk = xposedornot.analytics("clean@example.com", Config())
     assert breaches == []

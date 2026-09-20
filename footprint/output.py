@@ -27,6 +27,20 @@ def _encodable(sample: str) -> bool:
     return True
 
 
+def tolerate_narrow_encoding() -> None:
+    """Drop characters the console cannot encode instead of crashing on them.
+
+    Site names and breach titles come in every script, and a Windows console
+    is cp1252 by default, so one Cyrillic site name would otherwise kill a
+    scan at the point it prints the table.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 _FANCY = _encodable("█░▲→")
 BAR_FULL, BAR_EMPTY = ("█", "░") if _FANCY else ("#", "-")
 MARK, ARROW = ("▲", "→") if _FANCY else ("!", "->")
@@ -88,7 +102,7 @@ def render_pastes(pastes: list) -> None:
     _console.print(f"\n[bold]{len(pastes)}[/bold] paste(s):")
     for p in pastes:
         title = p.title or "(untitled)"
-        _console.print(f"  • [cyan]{p.source}[/cyan] {title} — {p.date or '?'}")
+        _console.print(f"  • [cyan]{p.source}[/cyan] {title} ({p.date or '?'})")
 
 
 def render_gravatar(profile: dict | None) -> None:
@@ -108,22 +122,16 @@ def render_gravatar(profile: dict | None) -> None:
 
 def render_password(exposure) -> None:
     if exposure.exposed:
-        _console.print(
-            f"[bold red]COMPROMISED[/bold red] — this password appears "
-            f"[bold]{exposure.count:,}[/bold] time(s) in breach corpora. "
-            "Do not use it."
-        )
+        _console.print(f"[bold red]COMPROMISED[/bold red] seen "
+                       f"[bold]{exposure.count:,}[/bold] time(s). Do not use it.")
     else:
-        _console.print(
-            "[green]Not found[/green] in the Pwned Passwords set. "
-            "(Absence is not proof of safety.)"
-        )
+        _console.print("[green]Not found[/green] in the Pwned Passwords set.")
 
 
 def render_username(hits: list) -> None:
     found = [h for h in hits if h.exists]
     _console.print(
-        f"Checked [bold]{len(hits)}[/bold] sites — "
+        f"Checked [bold]{len(hits)}[/bold] sites, "
         f"[bold green]{len(found)}[/bold green] hit(s):\n"
     )
     table = Table(header_style="bold magenta")
@@ -156,7 +164,7 @@ def render_reputation(rep) -> None:
 
 
 def render_leaks(records) -> None:
-    _console.print(f"\n[bold]Credential leaks (DeHashed)[/bold] — "
+    _console.print(f"\n[bold]Credential leaks (DeHashed)[/bold]: "
                    f"{len(records)} record(s) [dim](secrets redacted)[/dim]")
     if not records:
         return
@@ -170,7 +178,7 @@ def render_leaks(records) -> None:
 
 
 def render_darkweb(matches) -> None:
-    _console.print(f"\n[bold]Dark-web index (IntelX)[/bold] — {len(matches)} match(es) "
+    _console.print(f"\n[bold]Dark-web index (IntelX)[/bold]: {len(matches)} match(es) "
                    "[dim](metadata only)[/dim]")
     if not matches:
         return
@@ -211,7 +219,7 @@ def render_domain(recon) -> None:
         _console.print("  BIMI: [green]present[/green]")
 
     if recon.takeovers:
-        _console.print(f"\n  [bold red]SUBDOMAIN TAKEOVER[/bold red] — "
+        _console.print(f"\n  [bold red]SUBDOMAIN TAKEOVER[/bold red]: "
                        f"{len(recon.takeovers)} dangling record(s):")
         for t in recon.takeovers:
             _console.print(f"    [red]![/red] {t['host']} {ARROW} {t['target']} "
@@ -295,15 +303,14 @@ def render_actions(assessment) -> None:
     if not actions:
         return
     _console.print("\n[bold]What to do now[/bold]")
-    _console.print("  [dim][yellow]proof of concept[/yellow] - advice may be "
-                   "inaccurate[/dim]")
+    _console.print("  [dim][yellow]proof of concept[/yellow] - may be inaccurate[/dim]")
     for i, a in enumerate(actions, 1):
         _console.print(f"  [bold cyan]{i}.[/bold cyan] [bold]{a.title}[/bold]")
         _console.print(f"     [dim]{a.detail}[/dim]")
 
 
 def render_registered_accounts(accounts) -> None:
-    _console.print(f"\n[bold]Registered accounts[/bold] (holehe) — "
+    _console.print(f"\n[bold]Registered accounts[/bold] (holehe): "
                    f"{len(accounts)} site(s) where this email is in use")
     if not accounts:
         return
@@ -318,9 +325,13 @@ def render_registered_accounts(accounts) -> None:
 
 def render_profile(profile) -> None:
     rule(f"{profile.kind.title()}: {profile.subject}")
+    if getattr(profile, "failed", None):
+        _console.print(f"[bold red]SCAN FAILED[/bold red]: {profile.failed}")
+        render_notes(profile.notes)
+        return
     if profile.kind == "domain":
-        _console.print("[yellow]proof of concept[/yellow] [dim]- the domain "
-                       "checker is a test of a concept and may not be accurate[/dim]")
+        _console.print("[yellow]proof of concept[/yellow] "
+                       "[dim]- may not be accurate[/dim]")
     s = profile.sections
     if "risk" in s:
         render_assessment(s["risk"])

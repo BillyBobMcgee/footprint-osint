@@ -25,7 +25,6 @@ def test_dehashed_redacts_secret_values():
             ]
         },
         status=200,
-        match_querystring=False,
     )
 
     records = dehashed.search_email("victim@x.com", _cfg())

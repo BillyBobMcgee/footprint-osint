@@ -1,6 +1,6 @@
 """Hunter.io domain-search: email naming pattern + known addresses.
 
-Useful for authorized domain assessments — reveals the organization's email
+Useful for authorized domain assessments. Reveals the organization's email
 format (e.g. {first}.{last}@corp.com) and publicly known addresses.
 
 Requires a Hunter.io API key.

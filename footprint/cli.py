@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import sys
+import time
 from pathlib import Path
 
 from footprint import (
@@ -39,7 +40,7 @@ EXIT_SOURCE_ERROR = 2
 EXIT_USAGE = 3
 
 BANNER = (
-    "footprint — defensive OSINT exposure checker\n"
+    "footprint: defensive OSINT exposure checker\n"
     "Run with no arguments for the interactive menu.\n"
     "Use only against accounts/domains you own or are authorized to assess."
 )
@@ -49,9 +50,8 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="emit JSON instead of tables")
     parser.add_argument("--api-key", help="HIBP API key (overrides HIBP_API_KEY)")
     parser.add_argument("--profile", help="config-file profile to use")
-    parser.add_argument("--timeout", type=float, default=15.0, help="per-request timeout (s)")
-    parser.add_argument("--tor", action="store_true", default=None,
-                        help="route traffic through Tor (SOCKS5)")
+    parser.add_argument("--timeout", type=float,
+                        help="per-request timeout in seconds (default 15)")
     parser.add_argument("--cache", action="store_true", default=None,
                         help="enable the response cache")
     parser.add_argument("--no-cache", action="store_false", dest="cache",
@@ -166,6 +166,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_breaches = sub.add_parser("breaches", help="show the full public breach catalog")
     _add_common(p_breaches)
 
+    p_hist = sub.add_parser("history", help="show or clear the scans the GUI recorded")
+    hist_sub = p_hist.add_subparsers(dest="history_action")
+    h_clear = hist_sub.add_parser("clear", help="delete every recorded scan")
+    h_on = hist_sub.add_parser("on", help="start recording finished scans")
+    h_off = hist_sub.add_parser("off", help="stop recording finished scans")
+    p_hist.add_argument("--limit", type=int, default=30,
+                        help="how many to show (default 30)")
+    for p in (h_clear, h_on, h_off):
+        _add_common(p)
+    _add_common(p_hist)
+
     sub.add_parser("clear-cache", help="empty the response cache")
 
     return parser
@@ -176,7 +187,6 @@ def _config_from_args(args: argparse.Namespace) -> Config:
         profile=getattr(args, "profile", None),
         api_key=getattr(args, "api_key", None),
         timeout=getattr(args, "timeout", None),
-        tor=getattr(args, "tor", None),
         cache=getattr(args, "cache", None),
     )
 
@@ -193,16 +203,16 @@ def _deliver(config, embed: dict, raw: dict | None = None,
              attachments: list | None = None, quiet: bool = False) -> None:
     """Push to every configured webhook, reporting failures without raising.
 
-    A delivery problem is a warning, not an error — the scan itself succeeded,
+    A delivery problem is a warning, not an error. The scan itself succeeded,
     and failing here would break `watch check` in cron whenever Discord is down.
     """
     if not config.webhooks:
         if not quiet:
-            output.warn("no webhooks configured — `footprint webhook add <url>`")
+            output.warn("no webhooks configured, see `footprint webhook add <url>`")
         return
     if not config.active_webhooks:
         if not quiet:
-            output.warn("every webhook is disabled — `footprint webhook enable <n>`")
+            output.warn("every webhook is disabled, see `footprint webhook enable <n>`")
         return
     for url, error in notify.send(config, embed, raw, attachments=attachments):
         if error:
@@ -239,8 +249,19 @@ def _maybe_notify(args, config, payload: dict) -> None:
         _deliver(config, notify.profile_embed(payload), payload, quiet=True)
 
 
+def _report_failure(args, profile) -> int:
+    """A scan that reached nothing is an error, in whichever format was asked for."""
+    if args.json:
+        output.emit_json(profile.to_dict())
+    else:
+        output.render_profile(profile)
+    return EXIT_SOURCE_ERROR
+
+
 def _cmd_email(args, config) -> int:
     profile = aggregate.email_profile(args.address, config)
+    if profile.failed:
+        return _report_failure(args, profile)
     payload = profile.to_dict()
     if args.json:
         output.emit_json(payload)
@@ -248,11 +269,9 @@ def _cmd_email(args, config) -> int:
         output.render_profile(profile)
     _maybe_save(args, payload)
     _maybe_notify(args, config, payload)
-    exposed = bool(
-        profile.sections.get("breaches")
-        or profile.sections.get("xon_breaches")
-        or profile.sections.get("leaks")
-        or profile.sections.get("pastes")
+    exposed = any(
+        profile.sections.get(k)
+        for k in ("breaches", "xon_breaches", "leaks", "pastes", "darkweb")
     )
     return _verdict(args, getattr(profile.sections.get("risk"), "score", 0), exposed)
 
@@ -268,12 +287,14 @@ def _cmd_password(args, config) -> int:
     else:
         output.render_password(exposure)
     if _wants_delivery(args, config):
-        _deliver(config, notify.password_embed(exposure), quiet=True)
+        _deliver(config, notify.password_embed(exposure, value), quiet=True)
     return EXIT_FOUND if exposure.exposed else EXIT_OK
 
 
 def _cmd_domain(args, config) -> int:
     profile = aggregate.domain_profile(args.name, config)
+    if profile.failed:
+        return _report_failure(args, profile)
     payload = profile.to_dict()
     if args.json:
         output.emit_json(payload)
@@ -322,6 +343,52 @@ def _cmd_breaches(args, config) -> int:
     return EXIT_OK
 
 
+def _ago(when: float) -> str:
+    secs = max(time.time() - when, 0)
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if secs >= size:
+            return f"{int(secs // size)}{unit} ago"
+    return "just now"
+
+
+def _cmd_history(args, config) -> int:
+    """Show, clear, or switch off the record of finished scans.
+
+    Only the GUI writes to it. This is how a CLI user sees what is there and
+    gets rid of it, since the entries hold real exposure data.
+    """
+    action = getattr(args, "history_action", None) or "list"
+
+    if action == "clear":
+        n = storage.clear_history()
+        output.info(f"cleared {n} scan{'' if n == 1 else 's'}")
+        return EXIT_OK
+
+    if action in ("on", "off"):
+        config.history_enabled = action == "on"
+        config.save_profile()
+        output.info(f"scan history [bold]{action}[/bold]")
+        if action == "off":
+            output.info("[dim]entries already stored stay until `history clear`[/dim]")
+        return EXIT_OK
+
+    items = storage.history(limit=max(1, getattr(args, "limit", 30)))
+    if getattr(args, "json", False):
+        output.emit_json({"history": items, "recording": config.history_enabled})
+        return EXIT_OK
+
+    if not items:
+        output.info("[dim]nothing recorded[/dim]")
+    else:
+        output.info(f"[bold]{len(items)}[/bold] recent scan(s), newest first:")
+        for h in items:
+            output.info(f"  [bold]{h['score']:>3}[/bold] {h['label'] or '-':<9}"
+                        f"{h['subject']} [dim]({h['kind']}, {_ago(h['created'])})[/dim]")
+    if not config.history_enabled:
+        output.info("[dim]recording is off; `footprint history on` resumes it[/dim]")
+    return EXIT_OK
+
+
 def _cmd_clear_cache(args, config) -> int:
     n = cache.clear()
     output.info(f"cleared {n} cached entr{'y' if n == 1 else 'ies'}")
@@ -336,14 +403,6 @@ def _cmd_batch(args, config) -> int:
         return EXIT_USAGE
 
     kind = args.kind
-    if kind == "auto":
-        peek = bulk.load_subjects(path, "email")
-        if not peek:
-            output.error("no subjects in that file")
-            return EXIT_USAGE
-        kind = bulk.detect_kind_for(peek)
-        output.info(f"[dim]detected {kind}s[/dim]")
-
     try:
         rows = bulk.load_subjects(path, kind)
     except OSError as exc:
@@ -352,6 +411,11 @@ def _cmd_batch(args, config) -> int:
     if not rows:
         output.error("no subjects in that file")
         return EXIT_USAGE
+    if kind == "auto":
+        # Labels only differ for passwords, which are never auto-detected, so
+        # the rows read above are already the right shape.
+        kind = bulk.detect_kind_for(rows)
+        output.info(f"[dim]detected {kind}s[/dim]")
 
     out_dir = Path(args.out_dir)
     if args.save:
@@ -373,15 +437,16 @@ def _cmd_batch(args, config) -> int:
         output.info(f"Scanning [bold]{len(rows)}[/bold] {kind}(s)…")
     run = bulk.run(rows, kind, config, on_result=show)
 
-    saved: list[tuple[str, bytes]] = []
     if args.save:
+        written = 0
         for result in run.results:
             if result.payload is None:
                 continue  # passwords never produce a per-subject report
             name = f"footprint-{result.label}.html".replace("@", "_at_")
             name = "".join(c for c in name if c.isalnum() or c in "-_.")
             reports.save(result.payload, str(out_dir / name))
-        output.info(f"[green]wrote[/green] {len(run.results)} report(s) to {out_dir}")
+            written += 1
+        output.info(f"[green]wrote[/green] {written} report(s) to {out_dir}")
 
     payload = run.to_dict()
     if args.json:
@@ -395,6 +460,7 @@ def _cmd_batch(args, config) -> int:
 
     if _wants_delivery(args, config):
         # One summary message with each exposed subject's report attached.
+        saved: list[tuple[str, bytes]] = []
         for result in run.exposed:
             if result.payload is not None and len(saved) < notify.MAX_FILES:
                 attachment = notify.report_attachment(result.payload)
@@ -413,6 +479,8 @@ def _cmd_watch(args, config) -> int:
     if action == "add":
         storage.add_to_watchlist(args.subject, args.kind)
         output.info(f"[green]watching[/green] {args.subject}")
+        output.info("[dim]the first check sets the baseline; "
+                    "changes are flagged after that[/dim]")
         return EXIT_OK
 
     if action == "remove":
@@ -431,7 +499,7 @@ def _cmd_watch(args, config) -> int:
     # check
     items = storage.watchlist()
     if not items:
-        output.error("watchlist is empty — `footprint watch add <email>` first")
+        output.error("watchlist is empty, run `footprint watch add <email>` first")
         return EXIT_USAGE
 
     quiet = getattr(args, "quiet", False)
@@ -490,7 +558,7 @@ def _cmd_webhook(args, config) -> int:
     if action in ("enable", "disable"):
         hook = _find_webhook(config, args.target.strip())
         if hook is None:
-            output.error(f"no webhook matching {args.target!r} — see `webhook list`")
+            output.error(f"no webhook matching {args.target!r}, see `webhook list`")
             return EXIT_USAGE
         hook.enabled = action == "enable"
         config.save_profile()
@@ -546,11 +614,13 @@ _DISPATCH = {
     "gui": _cmd_gui,
     "webhook": _cmd_webhook,
     "breaches": _cmd_breaches,
+    "history": _cmd_history,
     "clear-cache": _cmd_clear_cache,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
+    output.tolerate_narrow_encoding()
     parser = build_parser()
     args = parser.parse_args(argv)
 

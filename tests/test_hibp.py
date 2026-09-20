@@ -27,7 +27,6 @@ def test_breached_account_parses_results():
             }
         ],
         status=200,
-        match_querystring=False,
     )
 
     breaches = breached_account("user@example.com", _cfg())
@@ -43,7 +42,6 @@ def test_breached_account_404_is_empty():
         responses.GET,
         f"{API_ROOT}/breachedaccount/nobody%40example.com",
         status=404,
-        match_querystring=False,
     )
     assert breached_account("nobody@example.com", _cfg()) == []
 
@@ -69,7 +67,6 @@ def test_domain_lookup_needs_no_key():
             }
         ],
         status=200,
-        match_querystring=False,
     )
     breaches = breaches_for_domain("example.com", Config(hibp_api_key=None))
     assert breaches[0].domain == "example.com"

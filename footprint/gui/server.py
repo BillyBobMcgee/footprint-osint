@@ -24,9 +24,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from footprint import __version__, aggregate, bulk, notify, reports
+from footprint import __version__, aggregate, bulk, notify, reports, scoring, storage
 from footprint.config import Config, Webhook
-from footprint.sources import pwned_passwords
+from footprint.sources import holehe_scan, pwned_passwords
 from footprint.sources import username as username_src
 from footprint.sources.base import SourceError
 
@@ -47,6 +47,12 @@ class Job:
     payload: dict[str, Any] | None = None
     error: str | None = None
     done: threading.Event = field(default_factory=threading.Event)
+    cancel: threading.Event = field(default_factory=threading.Event)
+    # Password runs only: {label: password}, for the webhook message. Kept off
+    # the payload so it cannot reach a report, an export, or the history table.
+    secrets: dict[str, str] = field(default_factory=dict)
+    sent: int = 0
+    notify_errors: list[str] = field(default_factory=list)
 
 
 class State:
@@ -81,11 +87,35 @@ def _run_scan(state: State, job: Job) -> None:
         if job.kind == "email":
             profile = aggregate.email_profile(job.subject, state.config,
                                               progress=progress)
+            if profile.failed:
+                raise SourceError(profile.failed)
             job.payload = profile.to_dict()
         elif job.kind == "domain":
             profile = aggregate.domain_profile(job.subject, state.config,
                                                progress=progress)
+            if profile.failed:
+                raise SourceError(profile.failed)
             job.payload = profile.to_dict()
+        elif job.kind == "watch":
+            items = storage.watchlist()
+            if not items:
+                raise SourceError("watchlist is empty")
+            job.subject = f"{len(items)} subject(s)"
+            job.events.put({"type": "total", "n": len(items)})
+            rows = []
+            for subject, kind in items:
+                job.events.put({"type": "scanning", "label": subject})
+                profile = (aggregate.domain_profile(subject, state.config)
+                           if kind == "domain"
+                           else aggregate.email_profile(subject, state.config))
+                new = storage.diff_new(subject, storage.fingerprints(profile))
+                row = {"subject": subject, "kind": kind, "new": list(new.values())}
+                rows.append(row)
+                job.events.put({"type": "watchrow", **row})
+            job.payload = {
+                "subject": "watchlist", "kind": "watch",
+                "sections": {"watch": rows}, "timeline": [], "notes": [],
+            }
         elif job.kind == "bulk":
             rows = bulk.parse_subjects("\n".join(job.subjects), job.bulk_kind)
             if not rows:
@@ -95,6 +125,7 @@ def _run_scan(state: State, job: Job) -> None:
                 kind = bulk.detect_kind_for(rows)
                 job.events.put({"type": "bulkkind", "kind": kind})
             job.subject = f"{len(rows)} {kind}(s)"
+            job.events.put({"type": "total", "n": len(rows)})
 
             def on_result(r):
                 job.events.put({
@@ -103,16 +134,25 @@ def _run_scan(state: State, job: Job) -> None:
                     "error": r.error,
                 })
 
-            run = bulk.run(rows, kind, state.config, on_result=on_result)
+            run = bulk.run(
+                rows, kind, state.config,
+                on_start=lambda label: job.events.put(
+                    {"type": "scanning", "label": label}),
+                on_result=on_result,
+                should_stop=job.cancel.is_set,
+            )
+            job.secrets = {r.label: r.secret for r in run.results if r.secret}
             job.payload = run.to_dict()
         elif job.kind == "username":
             progress("Site sweep", "start")
-            hits = username_src.check_username(job.subject, state.config)
+            hits = username_src.check_username(job.subject, state.config,
+                                               should_stop=job.cancel.is_set)
             progress("Site sweep", "ok")
             job.payload = {
                 "subject": job.subject,
                 "kind": "username",
-                "sections": {"sites": [h.to_dict() for h in hits]},
+                "sections": {"sites": [h.to_dict() for h in hits],
+                             "risk": scoring.assess_username(hits).to_dict()},
                 "timeline": [],
                 "notes": [],
             }
@@ -123,31 +163,85 @@ def _run_scan(state: State, job: Job) -> None:
     except Exception as exc:  # noqa: BLE001 - surface it in the UI, don't crash
         job.error = f"unexpected error: {exc}"
     finally:
+        if job.payload is not None and state.config.history_enabled:
+            if job.cancel.is_set():
+                job.payload.setdefault("notes", []).append("stopped early")
+            # The payload kind is the precise one ("bulk-password"), which is
+            # what keeps password runs out of the history table.
+            storage.record_scan(job.subject,
+                                str(job.payload.get("kind", job.kind)), job.payload)
         if job.payload is not None and state.config.active_webhooks:
             # Enabled webhooks receive every finished scan, same as the CLI.
             try:
-                notify.send(state.config, _embed_for(job.payload), job.payload)
+                embed = _embed_for(job.payload, job.secrets)
+                if embed is not None:
+                    for url, error in notify.send(state.config, embed, job.payload):
+                        if error:
+                            job.notify_errors.append(f"{notify.redact(url)}: {error}")
+                        else:
+                            job.sent += 1
             except Exception:  # noqa: BLE001 - delivery must not fail the scan
                 pass
         job.events.put({"type": "done"})
         job.done.set()
 
 
-def _embed_for(payload: dict[str, Any]) -> dict:
-    """Bulk runs get the summary embed; everything else the profile one."""
-    if str(payload.get("kind", "")).startswith("bulk-"):
-        return notify.bulk_embed(_BulkView(payload))
+def _finished_job(state: State, payload: dict[str, Any]) -> str:
+    """Park a stored payload in the job table so the export routes can find it."""
+    job_id, job = state.new_job(str(payload.get("kind", "result")),
+                                str(payload.get("subject", "?")))
+    job.payload = payload
+    job.done.set()
+    return job_id
+
+
+def _password_payload(value: str, exposure) -> dict[str, Any]:
+    """A password check in the same shape as every other result.
+
+    The password is the subject, so the history entry, the report and its
+    filename all name it. Anything less means going back to the breach site to
+    work out which password the verdict was about.
+    """
+    count = getattr(exposure, "count", 0)
+    score = scoring.password_score(count)
+    return {
+        "subject": value,
+        "kind": "password",
+        "sections": {
+            "password": exposure.to_dict(),
+            "risk": {"score": score, "label": scoring.label_for(score),
+                     "factors": [], "actions": []},
+        },
+        "timeline": [],
+        "notes": [],
+    }
+
+
+def _embed_for(payload: dict[str, Any],
+               secrets: dict[str, str] | None = None) -> dict | None:
+    """Pick the embed for a payload, or None when there is nothing to send."""
+    kind = str(payload.get("kind", ""))
+    if kind.startswith("bulk-"):
+        return notify.bulk_embed(_BulkView(payload, secrets))
+    if kind == "watch":
+        found = {r["subject"]: r["new"]
+                 for r in (payload.get("sections") or {}).get("watch", [])
+                 if r.get("new")}
+        # Nothing new is the normal case; staying silent is the whole point.
+        return notify.watch_embed(found) if found else None
     return notify.profile_embed(payload)
 
 
 class _BulkView:
     """Adapts a serialised bulk payload back to what bulk_embed expects."""
 
-    def __init__(self, payload: dict[str, Any]):
+    def __init__(self, payload: dict[str, Any],
+                 secrets: dict[str, str] | None = None):
         rows = (payload.get("sections") or {}).get("bulk") or []
+        self.secrets = secrets or {}
         self.kind = str(payload.get("kind", "bulk-")).removeprefix("bulk-")
         self.notes = payload.get("notes") or []
-        self.results = [_BulkRow(r) for r in rows]
+        self.results = [_BulkRow(r, self.secrets) for r in rows]
 
     @property
     def exposed(self):
@@ -155,8 +249,9 @@ class _BulkView:
 
 
 class _BulkRow:
-    def __init__(self, row: dict[str, Any]):
+    def __init__(self, row: dict[str, Any], secrets: dict[str, str] | None = None):
         self.label = row.get("label", "")
+        self.secret = (secrets or {}).get(self.label)
         self.score = int(row.get("score", 0) or 0)
         self.risk = row.get("risk", "")
         self.detail = row.get("detail", "")
@@ -168,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = f"footprint/{__version__}"
     state: State  # injected by serve()
 
-    # ------------------------------------------------------------- plumbing
+    # --- plumbing
     def log_message(self, fmt, *args):  # noqa: A002 - silence stdlib access logs
         pass
 
@@ -189,22 +284,37 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code: int, payload: dict) -> None:
         self._send(code, json.dumps(payload, default=str).encode(), "application/json")
 
+    def _local_host(self) -> bool:
+        """Reject a Host we did not hand out, which is how DNS rebinding gets in."""
+        host = self.headers.get("Host", "").rsplit(":", 1)[0].strip("[]")
+        return host in ("127.0.0.1", "localhost", "::1", "")
+
     def _authorized(self, params: dict) -> bool:
         supplied = (params.get("token") or [""])[0]
         header = self.headers.get("X-Footprint-Token", "")
         return secrets.compare_digest(supplied or header, self.state.token)
 
     def _read_body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0 or length > MAX_BODY:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length > MAX_BODY:
+            # The body is still on the socket, so this connection is finished.
+            self.close_connection = True
+            return {}
+        if length <= 0:
             return {}
         try:
             return json.loads(self.rfile.read(length) or b"{}")
         except (json.JSONDecodeError, ValueError):
             return {}
 
-    # ------------------------------------------------------------------ GET
+    # --- GET
     def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+        if not self._local_host():
+            self._json(403, {"error": "bad host"})
+            return
         parts = urlsplit(self.path)
         params = parse_qs(parts.query)
         route = parts.path
@@ -228,6 +338,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self._settings_payload())
             return
 
+        if route == "/api/watch":
+            self._json(200, {"items": [{"subject": s, "kind": k}
+                                       for s, k in storage.watchlist()]})
+            return
+
+        if route == "/api/history":
+            self._json(200, {"items": storage.history()})
+            return
+
         if route == "/api/events":
             self._stream(params)
             return
@@ -238,8 +357,11 @@ class Handler(BaseHTTPRequestHandler):
 
         self._json(404, {"error": "not found"})
 
-    # ----------------------------------------------------------------- POST
+    # --- POST
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
+        if not self._local_host():
+            self._json(403, {"error": "bad host"})
+            return
         parts = urlsplit(self.path)
         params = parse_qs(parts.query)
         if not self._authorized(params):
@@ -257,6 +379,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not any(x.strip() for x in subjects):
                     self._json(400, {"error": "no subjects given"})
                     return
+            elif kind == "watch":
+                pass  # the subjects come from the stored watchlist
             elif not subject:
                 self._json(400, {"error": "no subject given"})
                 return
@@ -279,7 +403,43 @@ class Handler(BaseHTTPRequestHandler):
             except SourceError as exc:
                 self._json(502, {"error": str(exc)})
                 return
-            self._json(200, exposure.to_dict())
+
+            config = self.state.config
+            payload = _password_payload(value, exposure)
+            job_id = _finished_job(self.state, payload)
+            if config.history_enabled:
+                storage.record_scan(payload["subject"], "password", payload)
+
+            # Same as the CLI: the webhook carries the password itself, because
+            # a verdict you cannot match to a password is not much use.
+            sent = 0
+            if config.active_webhooks:
+                embed = notify.password_embed(exposure, value)
+                sent = sum(1 for _, err in notify.send(config, embed, attach=False)
+                           if err is None)
+            self._json(200, {**exposure.to_dict(), "job": job_id, "sent": sent})
+            return
+
+        if route == "/api/history":
+            if body.get("clear"):
+                storage.clear_history()
+                self._json(200, {"items": []})
+                return
+            payload = storage.history_payload(int(body.get("open") or 0))
+            if payload is None:
+                self._json(404, {"error": "no such scan"})
+                return
+            self._json(200, {"job": _finished_job(self.state, payload),
+                             "payload": payload})
+            return
+
+        if route == "/api/stop":
+            job = self.state.jobs.get(str(body.get("job", "")))
+            if job is None:
+                self._json(404, {"error": "no such job"})
+                return
+            job.cancel.set()
+            self._json(200, {"stopping": True})
             return
 
         if route == "/api/settings":
@@ -290,9 +450,23 @@ class Handler(BaseHTTPRequestHandler):
             self._notify(body)
             return
 
+        if route == "/api/watch":
+            subject = str(body.get("subject", "")).strip()
+            if not subject:
+                self._json(400, {"error": "no subject given"})
+                return
+            if body.get("action") == "remove":
+                storage.remove_from_watchlist(subject)
+            else:
+                kind = "domain" if body.get("kind") == "domain" else "email"
+                storage.add_to_watchlist(subject, kind)
+            self._json(200, {"items": [{"subject": s, "kind": k}
+                                       for s, k in storage.watchlist()]})
+            return
+
         self._json(404, {"error": "not found"})
 
-    # ------------------------------------------------------------- handlers
+    # --- handlers
     def _settings_payload(self) -> dict:
         c = self.state.config
 
@@ -308,9 +482,8 @@ class Handler(BaseHTTPRequestHandler):
             "intelx": mask(c.intelx_api_key),
             "hunter": mask(c.hunter_api_key),
             "emailrep": mask(c.emailrep_api_key),
-            "tor": c.tor,
-            "tor_proxy": c.tor_proxy,
             "cache": c.cache_enabled,
+            "holehe": holehe_scan.available(),
             "profile": c.profile,
             "webhooks": [
                 {"url": notify.redact(w.url), "enabled": w.enabled,
@@ -334,10 +507,6 @@ class Handler(BaseHTTPRequestHandler):
             value = str(body.get(field_name, "")).strip()
             if value and "…" not in value:
                 setattr(c, attr, value)
-        if "tor" in body:
-            c.tor = bool(body["tor"])
-        if body.get("tor_proxy"):
-            c.tor_proxy = str(body["tor_proxy"]).strip()
         if "cache" in body:
             c.cache_enabled = bool(body["cache"])
         if "webhook_states" in body:
@@ -382,7 +551,10 @@ class Handler(BaseHTTPRequestHandler):
             if job is None or job.payload is None:
                 self._json(404, {"error": "no finished scan with that id"})
                 return
-            embed, raw = _embed_for(job.payload), job.payload
+            embed, raw = _embed_for(job.payload, job.secrets), job.payload
+            if embed is None:
+                self._json(200, {"sent": 0, "errors": ["nothing new to send"]})
+                return
 
         sent, errors = 0, []
         for url, error in notify.send(config, embed, raw):
@@ -423,7 +595,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 continue
             if event.get("type") == "done":
-                emit({"type": "result", "payload": job.payload, "error": job.error})
+                emit({"type": "result", "payload": job.payload, "error": job.error,
+                      "sent": job.sent, "errors": job.notify_errors})
                 return
             if not emit(event):
                 return
@@ -435,21 +608,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "no finished scan with that id"})
             return
 
-        import tempfile
+        as_json = (params.get("format") or [""])[0] == "json"
+        try:
+            if as_json:
+                data = json.dumps(job.payload, indent=2, default=str).encode("utf-8")
+            else:
+                data = reports.render(job.payload).encode("utf-8")
+        except (ValueError, TypeError) as exc:
+            self._json(500, {"error": str(exc)})
+            return
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "report.html"
-            try:
-                reports.save(job.payload, str(path))
-                data = path.read_bytes()
-            except (OSError, ValueError) as exc:
-                self._json(500, {"error": str(exc)})
-                return
-
-        name = f"footprint-{job.subject}.html".replace("@", "_at_")
+        ext = "json" if as_json else "html"
+        name = f"footprint-{job.subject}.{ext}".replace("@", "_at_")
         # A bulk subject is "2 email(s)", so strip anything awkward in a filename.
         name = "".join(c if c.isalnum() or c in "-_." else "-" for c in name)
-        self._send(200, data, "text/html; charset=utf-8",
+        ctype = "application/json" if as_json else "text/html; charset=utf-8"
+        self._send(200, data, ctype,
                    {"Content-Disposition": f'attachment; filename="{name}"'})
 
 

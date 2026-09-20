@@ -2,6 +2,10 @@
 
 Config is resolved with this precedence (later wins):
     config-file profile  <  environment variables  <  explicit CLI flags
+
+Webhooks are the exception: the file wins there, because `footprint webhook
+add` edits the file and an environment variable shadowing it would make that
+command look broken.
 """
 
 from __future__ import annotations
@@ -12,8 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-USER_AGENT = "footprint-osint/0.3 (+https://github.com/BillyBobMcgee/footprint)"
-DEFAULT_TOR_PROXY = "socks5h://127.0.0.1:9050"
+USER_AGENT = "footprint-osint/1.0 (+https://github.com/BillyBobMcgee/footprint)"
 
 # Environment variable names for API keys.
 ENV_HIBP_KEY = "HIBP_API_KEY"
@@ -70,12 +73,14 @@ class Config:
     timeout: float = 15.0
     max_retries: int = 3
     user_agent: str = USER_AGENT
-    tor: bool = False
-    tor_proxy: str = DEFAULT_TOR_PROXY
 
     # Caching
     cache_enabled: bool = False
     cache_ttl: int = 3600
+
+    # Whether finished scans are kept so they can be reopened later. On by
+    # default, but the table holds real exposure data, so it can be switched off.
+    history_enabled: bool = True
 
     # Delivery targets (Discord, or any JSON endpoint). Treated as secrets:
     # anyone holding one can post to that channel.
@@ -96,13 +101,7 @@ class Config:
         """Only the switched-on targets. Delivery always goes through this."""
         return [w for w in self.webhooks if w.enabled]
 
-    @property
-    def proxies(self) -> dict[str, str] | None:
-        if self.tor:
-            return {"http": self.tor_proxy, "https": self.tor_proxy}
-        return None
-
-    # ------------------------------------------------------------------ load
+    # --- load
     @classmethod
     def resolve(
         cls,
@@ -110,14 +109,13 @@ class Config:
         profile: str | None = None,
         api_key: str | None = None,
         timeout: float | None = None,
-        tor: bool | None = None,
         cache: bool | None = None,
     ) -> Config:
         """Build a Config from file + env + explicit overrides."""
         file_data = _load_file_profile(profile)
 
         def pick(file_key: str, env_name: str) -> str | None:
-            return file_data.get(file_key) or os.environ.get(env_name) or None
+            return os.environ.get(env_name) or file_data.get(file_key) or None
 
         cfg = cls(
             hibp_api_key=api_key or pick("hibp_api_key", ENV_HIBP_KEY),
@@ -126,11 +124,13 @@ class Config:
             intelx_api_key=pick("intelx_api_key", ENV_INTELX_KEY),
             hunter_api_key=pick("hunter_api_key", ENV_HUNTER_KEY),
             emailrep_api_key=pick("emailrep_api_key", ENV_EMAILREP_KEY),
-            timeout=timeout if timeout is not None else float(file_data.get("timeout", 15.0)),
-            tor=tor if tor is not None else bool(file_data.get("tor", False)),
-            tor_proxy=file_data.get("tor_proxy", DEFAULT_TOR_PROXY),
+            # A hand-edited config can hold nulls or junk; fall back rather
+            # than crash every command.
+            timeout=timeout if timeout is not None else _number(
+                file_data.get("timeout"), 15.0),
             cache_enabled=cache if cache is not None else bool(file_data.get("cache", False)),
-            cache_ttl=int(file_data.get("cache_ttl", 3600)),
+            cache_ttl=int(_number(file_data.get("cache_ttl"), 3600)),
+            history_enabled=bool(file_data.get("history", True)),
             webhooks=_parse_webhooks(
                 file_data.get("webhooks") or os.environ.get(ENV_WEBHOOKS)
             ),
@@ -138,7 +138,7 @@ class Config:
         )
         return cfg
 
-    # ------------------------------------------------------------------ save
+    # --- save
     def save_profile(self, profile: str | None = None) -> Path:
         """Persist credential/network settings to the config file profile."""
         name = profile or self.profile or "default"
@@ -154,10 +154,9 @@ class Config:
             "hunter_api_key": self.hunter_api_key,
             "emailrep_api_key": self.emailrep_api_key,
             "timeout": self.timeout,
-            "tor": self.tor,
-            "tor_proxy": self.tor_proxy,
             "cache": self.cache_enabled,
             "cache_ttl": self.cache_ttl,
+            "history": self.history_enabled,
             "webhooks": [w.to_dict() for w in self.webhooks],
         }
         path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
@@ -176,6 +175,13 @@ class Config:
             {"url": redact(w.url), "enabled": w.enabled} for w in self.webhooks
         ]
         return out
+
+
+def _number(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _parse_webhooks(value: Any) -> list[Webhook]:

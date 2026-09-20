@@ -47,6 +47,7 @@ class SiteHit:
     site: str
     url: str
     exists: bool
+    category: str = "other"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,7 +68,7 @@ class PasswordExposure:
 class LeakRecord:
     """A record found in a credential-leak index (DeHashed).
 
-    Secret values (password, hash) are deliberately NOT stored — only whether
+    Secret values (password, hash) are deliberately NOT stored, only whether
     each field type was present. This keeps footprint an exposure-assessment
     tool rather than a credential-dumper.
     """
@@ -86,7 +87,7 @@ class LeakRecord:
 class DarkWebMatch:
     """A match in a dark-web / leak *index* (Intelligence X).
 
-    Only the catalog metadata is kept — never the leaked file contents.
+    Only the catalog metadata is kept, never the leaked file contents.
     """
 
     name: str
@@ -152,7 +153,7 @@ class RegisteredAccount:
     """An account discovered to exist for an email via signup/reset probes.
 
     Produced by the holehe-style registration checker. No key is required and
-    the target is not notified — only the existence signal is recorded.
+    the target is not notified, only the existence signal is recorded.
     """
 
     site: str

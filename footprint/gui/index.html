@@ -69,6 +69,24 @@ button.sm{padding:7px 12px;font-size:13px;border-radius:8px}
 .risk-pill.hot{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
 .risk-pill.warm{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
 .risk-pill.cool{color:var(--good);border-color:color-mix(in srgb,var(--good) 35%,transparent)}
+#bar{margin:0 0 18px;display:flex;align-items:center;gap:12px}
+#bar .track{flex:1;height:6px;border-radius:99px;background:var(--line);
+  overflow:hidden}
+#bar .track i{display:block;height:100%;width:0;background:var(--accent);
+  border-radius:99px;transition:width .25s ease}
+#bar .label{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;
+  white-space:nowrap;min-width:62px;text-align:right}
+#bar .now{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:280px;min-width:140px}
+#bar.done .track i{background:var(--good)}
+#watchPanel{margin-bottom:14px}
+.wrow{display:flex;align-items:center;gap:10px;padding:8px 11px;margin-bottom:6px;
+  border:1px solid var(--line);border-radius:8px;font-size:13.5px}
+.wrow .who{flex:1}
+.wrow .x{background:none;border:0;color:var(--dim);font-size:16px;padding:0 4px;
+  line-height:1;cursor:pointer}
+.wrow .x:hover{color:var(--bad);opacity:1}
+.wnew{color:var(--bad)} .wsame{color:var(--dim)}
 
 /* -------------------------------------------------------------- progress */
 #progress{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:22px}
@@ -110,6 +128,19 @@ button.sm{padding:7px 12px;font-size:13px;border-radius:8px}
 }
 .factors li.severe code{color:var(--bad)}
 .factors li.caution code{color:var(--warn)}
+.how{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.how summary{cursor:pointer;font-size:13px;color:var(--dim);list-style:none}
+.how summary::-webkit-details-marker{display:none}
+.how summary::before{content:"+ ";font-weight:600}
+.how[open] summary::before{content:"- "}
+.how summary:hover{color:var(--ink)}
+.how p{font-size:13px;color:var(--dim);margin:10px 0 0;max-width:62ch;line-height:1.55}
+.bands{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.band{
+  font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
+  background:var(--bg);border:1px solid transparent;padding:3px 8px;border-radius:5px;
+}
+.band.on{color:var(--ink);border-color:var(--line);background:var(--panel)}
 
 /* ----------------------------------------------------------------- tiles */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;
@@ -185,6 +216,14 @@ ol.todo p{margin:0;color:var(--dim);font-size:13.5px}
 
 /* --------------------------------------------------------------- notices */
 .notice{color:var(--dim);font-size:13px;padding:3px 0}
+.srcs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.src{font-size:12px;border:1px solid var(--line);border-radius:99px;padding:2px 9px}
+.src.off{color:var(--dim);opacity:.5}
+.hrow{display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;
+      border-bottom:1px solid var(--line)}
+.hrow:hover .hsub{color:var(--accent)}
+.hscore{font-variant-numeric:tabular-nums;min-width:32px;text-align:right;color:var(--dim)}
+.hwhen{margin-left:auto;color:var(--dim);font-size:12px}
 .big{font-size:17px;font-weight:600;margin:0 0 6px}
 .center{text-align:center;padding:36px 0;color:var(--dim)}
 .hide{display:none !important}
@@ -217,6 +256,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
   <div class="bar">
     <div class="logo"><b>◈</b> footprint <span class="ver">v__VERSION__</span></div>
     <div class="spacer"></div>
+    <button class="ghost sm" id="btnHistory">Recent</button>
     <button class="ghost sm" id="btnSettings">Settings</button>
   </div>
 </header>
@@ -230,17 +270,26 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       <option value="username">Username</option>
       <option value="password">Password</option>
       <option value="bulk">Bulk</option>
+      <option value="watch">Watch</option>
+    </select>
+    <select id="watchKind" class="hide">
+      <option value="email">Email</option>
+      <option value="domain">Domain</option>
     </select>
     <input type="text" id="subject" placeholder="you@example.com" autocomplete="off"
            spellcheck="false">
     <select id="bulkKind" class="hide">
-      <option value="auto">Detect</option>
+      <option value="auto">Auto-detect</option>
       <option value="email">Emails</option>
       <option value="domain">Domains</option>
       <option value="username">Usernames</option>
       <option value="password">Passwords</option>
     </select>
     <button id="btnScan">Scan</button>
+    <button class="ghost hide" id="btnStop">Stop</button>
+  </div>
+  <div id="watchPanel" class="hide">
+    <div id="watchList"></div>
   </div>
   <div id="bulkPanel" class="hide">
     <textarea id="bulkText" rows="6" spellcheck="false"
@@ -256,6 +305,13 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
     authorized to assess.
   </p>
 
+  <div id="sources" class="srcs"></div>
+
+  <div id="bar" class="hide">
+    <div class="now"></div>
+    <div class="track"><i></i></div>
+    <div class="label"></div>
+  </div>
   <div id="progress"></div>
   <div id="results"></div>
 
@@ -276,20 +332,26 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
     <input type="password" id="s_hunter" autocomplete="off"></div>
   <div class="field"><label>EmailRep API key</label>
     <input type="password" id="s_emailrep" autocomplete="off"></div>
-  <div class="row"><input type="checkbox" id="s_tor"><label for="s_tor">Route through Tor</label></div>
-  <div class="field"><label>Tor SOCKS proxy</label>
-    <input type="text" id="s_tor_proxy"></div>
   <div class="row"><input type="checkbox" id="s_cache"><label for="s_cache">Cache responses</label></div>
   <div class="field"><label>Webhooks</label>
     <div id="hookList"></div>
     <textarea id="s_webhooks" rows="2" spellcheck="false"
-      placeholder="Add a webhook — one URL per line"></textarea>
+      placeholder="Add a webhook, one URL per line"></textarea>
     <p class="notice" id="hookState"></p>
     <button class="ghost sm" id="btnTestHook">Send test message</button>
   </div>
   <div class="actionsrow">
     <button class="ghost" id="btnClose">Close</button>
     <button id="btnSave">Save</button>
+  </div>
+</dialog>
+
+<dialog id="history">
+  <h2 style="margin:0 0 16px;font-size:16px">Recent scans</h2>
+  <div id="histList"></div>
+  <div class="actionsrow">
+    <button class="ghost" id="btnHistClear">Clear</button>
+    <button id="btnHistClose">Close</button>
   </div>
 </dialog>
 
@@ -312,9 +374,10 @@ const PLACEHOLDER = {
 const HINT = {
   email: "Runs every keyless source at once. Use only on accounts you own or are authorized to assess.",
   domain: "DNS posture, DKIM/DNSSEC/MTA-STS, certificate-transparency subdomains, and dangling-CNAME takeover checks.",
-  username: "Sweeps ~600 public sites from the WhatsMyName dataset. This one takes a minute.",
+  username: "Sweeps ~700 public sites from the WhatsMyName dataset. This one takes a minute.",
   password: "Only the first 5 characters of the SHA-1 hash leave this machine. The password itself never does.",
   bulk: "One subject per line. Passwords are labelled by line number and never displayed.",
+  watch: "Re-scans everything below and reports what's new. The first check sets the baseline.",
 };
 
 let currentJob = null;
@@ -322,15 +385,91 @@ let currentJob = null;
 $("#kind").onchange = () => {
   const k = $("#kind").value;
   const isBulk = k === "bulk";
+  const isWatch = k === "watch";
   $("#subject").classList.toggle("hide", isBulk);
   $("#bulkKind").classList.toggle("hide", !isBulk);
   $("#bulkPanel").classList.toggle("hide", !isBulk);
+  $("#watchKind").classList.toggle("hide", !isWatch);
+  $("#watchPanel").classList.toggle("hide", !isWatch);
+  $("#btnScan").textContent = isWatch ? "Add" : "Scan";
   $("#subject").type = k === "password" ? "password" : "text";
-  $("#subject").placeholder = PLACEHOLDER[k] || "";
+  $("#subject").placeholder = isWatch ? "add a subject to watch"
+                                      : (PLACEHOLDER[k] || "");
   $("#subject").value = "";
   $("#hint").textContent = HINT[k];
   countLines();
+  drawSources();
+  if (isWatch) loadWatch();
 };
+
+// ------------------------------------------------------------------ watch
+async function loadWatch(items) {
+  if (!items) items = (await (await api("/api/watch")).json()).items || [];
+  const el = $("#watchList");
+  el.innerHTML = (items.length ? items.map(w => `
+    <div class="wrow">
+      <span class="who"><b>${esc(w.subject)}</b>
+        <span class="notice">${esc(w.kind)}</span></span>
+      <button class="x" data-drop="${esc(w.subject)}" title="Stop watching">&times;</button>
+    </div>`).join("") : `<p class="notice">Nothing watched yet.</p>`)
+    + (items.length ? `<button class="ghost sm" id="btnCheck">Check now</button>` : "");
+}
+
+$("#watchList").addEventListener("click", async (ev) => {
+  const drop = ev.target.closest("button[data-drop]");
+  if (drop) {
+    const r = await (await api("/api/watch", {
+      method: "POST",
+      body: JSON.stringify({ action: "remove", subject: drop.dataset.drop }),
+    })).json();
+    loadWatch(r.items);
+    return;
+  }
+  if (ev.target.id === "btnCheck") runWatchCheck();
+});
+
+async function addWatch() {
+  const subject = $("#subject").value.trim();
+  if (!subject) return;
+  const r = await (await api("/api/watch", {
+    method: "POST",
+    body: JSON.stringify({ subject, kind: $("#watchKind").value }),
+  })).json();
+  $("#subject").value = "";
+  loadWatch(r.items);
+}
+
+async function runWatchCheck() {
+  $("#empty").classList.add("hide");
+  $("#btnScan").disabled = true;
+  $("#progress").innerHTML = "";
+  $("#results").innerHTML = "";
+  watchRows = [];
+  hideBar();
+  try {
+    const res = await api("/api/scan", {
+      method: "POST", body: JSON.stringify({ kind: "watch", subject: "" }),
+    });
+    const data = await res.json();
+    if (data.error) return fail(data.error);
+    currentJob = data.job;
+    listen(data.job, "watchlist", "watch");
+  } catch (err) { fail(err.message); }
+}
+
+let watchRows = [];
+
+function watchTable(rows) {
+  const anyNew = rows.some(r => r.new.length);
+  return `<div class="card"><h2>Watch (${rows.length} checked)</h2>${
+    rows.map(r => `<div class="wrow">
+      <span class="who"><b>${esc(r.subject)}</b></span>
+      <span class="${r.new.length ? "wnew" : "wsame"}">${
+        r.new.length ? `${r.new.length} new` : "no change"}</span>
+    </div>${r.new.map(n => `<p class="notice" style="margin:2px 0 8px 12px">
+      • ${esc(n)}</p>`).join("")}`).join("")
+  }${anyNew ? "" : `<p class="notice">Nothing new.</p>`}</div>`;
+}
 
 function bulkLines() {
   return $("#bulkText").value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
@@ -352,8 +491,13 @@ $("#bulkFile").addEventListener("change", (ev) => {
   reader.readAsText(file);
   ev.target.value = "";
 });
-$("#subject").addEventListener("keydown", e => { if (e.key === "Enter") scan(); });
-$("#btnScan").onclick = scan;
+$("#subject").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  if ($("#kind").value === "watch") addWatch(); else scan();
+});
+$("#btnScan").onclick = () => {
+  if ($("#kind").value === "watch") addWatch(); else scan();
+};
 
 // ------------------------------------------------------------------- scan
 async function scan() {
@@ -367,6 +511,8 @@ async function scan() {
   $("#progress").innerHTML = "";
   $("#results").innerHTML = "";
   bulkRows = [];
+  hideBar();
+  showStop(STOPPABLE.has(kind));
 
   try {
     if (kind === "password") return await checkPassword(subject);
@@ -393,10 +539,22 @@ function listen(job, subject, kind) {
 
   src.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === "bulkkind") {
+    if (msg.type === "total") {
+      showBar(msg.n);
+    } else if (msg.type === "scanning") {
+      active.add(msg.label);
+      drawBar();
+    } else if (msg.type === "watchrow") {
+      watchRows.push(msg);
+      active.delete(msg.subject);
+      setBar(watchRows.length);
+      $("#results").innerHTML = watchTable(watchRows);
+    } else if (msg.type === "bulkkind") {
       $("#hint").textContent = `Detected ${msg.kind}s.`;
     } else if (msg.type === "bulkrow") {
       bulkRows.push(msg);
+      active.delete(msg.label);
+      setBar(bulkRows.length);
       renderBulkProgress();
     } else if (msg.type === "progress") {
       let chip = chips[msg.label];
@@ -408,16 +566,28 @@ function listen(job, subject, kind) {
         $("#progress").appendChild(chip);
       }
       chip.className = "chip " + ({ start: "run", ok: "ok", skip: "skip" }[msg.status] || "");
+      // One scan has no subject count, so the sources are the progress.
+      if (msg.status === "start") active.add(msg.label);
+      else active.delete(msg.label);
+      const all = Object.values(chips);
+      barTotal = all.length;
+      $("#bar").classList.remove("hide");
+      setBar(all.filter(c => !c.classList.contains("run")).length);
     } else if (msg.type === "result") {
       src.close();
       $("#btnScan").disabled = false;
-      if (msg.error) return fail(msg.error);
-      render(msg.payload, kind);
+      showStop(false);
+      active.clear();
+      setBar(barTotal, "done");
+      if (msg.error) { hideBar(); return fail(msg.error); }
+      render(msg.payload, kind, msg);
     }
   };
   src.onerror = () => {
     src.close();
     $("#btnScan").disabled = false;
+    showStop(false);
+    hideBar();
   };
 }
 
@@ -428,15 +598,8 @@ async function checkPassword(value) {
     });
     const d = await res.json();
     if (d.error) return fail(d.error);
-    $("#results").innerHTML = d.exposed
-      ? `<div class="card"><h2>Password</h2>
-         <p class="big err">Compromised — seen ${d.count.toLocaleString()} time(s).</p>
-         <p class="notice">This password is in public breach corpora. Do not use it
-         anywhere. If you already have, change it there first.</p></div>`
-      : `<div class="card"><h2>Password</h2>
-         <p class="big" style="color:var(--good)">Not found in the Pwned Passwords set.</p>
-         <p class="notice">Absence is not proof of safety — it only means this exact
-         string is not in the corpus yet.</p></div>`;
+    currentJob = d.job;
+    $("#results").innerHTML = passwordCard(d) + deliveredCard(d) + exportBar();
   } catch (err) {
     fail(err.message);
   } finally {
@@ -447,6 +610,7 @@ async function checkPassword(value) {
 
 function fail(message) {
   $("#btnScan").disabled = false;
+  hideBar();
   $("#results").innerHTML =
     `<div class="card"><p class="big err">Scan failed</p>
      <p class="notice">${esc(message)}</p></div>`;
@@ -454,6 +618,38 @@ function fail(message) {
 
 // ----------------------------------------------------------------- render
 let bulkRows = [];
+let barTotal = 0;
+let barDone = 0;
+let active = new Set();   // subjects currently being scanned
+
+function showBar(total) {
+  barTotal = total;
+  barDone = 0;
+  active.clear();
+  $("#bar").classList.remove("hide", "done");
+  drawBar();
+}
+
+function setBar(done, note) {
+  barDone = done;
+  drawBar(note);
+}
+
+function drawBar(note) {
+  const pct = barTotal ? Math.round((barDone / barTotal) * 100) : 0;
+  $("#bar .track i").style.width = pct + "%";
+  const running = [...active];
+  const shown = running.slice(0, 2).join(", ")
+    + (running.length > 2 ? ` +${running.length - 2}` : "");
+  $("#bar .now").textContent = note || (running.length ? shown : "");
+  $("#bar .label").textContent = `${barDone} / ${barTotal}`;
+  $("#bar").classList.toggle("done", barTotal > 0 && barDone >= barTotal);
+}
+
+function hideBar() {
+  $("#bar").classList.add("hide");
+  active.clear();
+}
 
 // Rows arrive one at a time, so the table fills in as the scan runs.
 function renderBulkProgress() {
@@ -473,28 +669,59 @@ function bulkTable(rows, running) {
     <td class="notice">${esc(r.error || r.risk)}</td>
     <td class="notice">${esc(r.error ? "" : r.detail)}</td>
   </tr>`).join("");
-  return `<div class="card"><h2>${running ? "Scanning" : "Results"} —
+  return `<div class="card"><h2>${running ? "Scanning" : "Results"}:
     ${rows.length} subject(s), ${exposed} exposed</h2>
     <div class="scroll"><table><thead><tr><th>Score</th><th>Subject</th>
     <th>Risk</th><th>Detail</th></tr></thead><tbody>${body}</tbody></table></div>
     </div>`;
 }
 
-function render(payload, kind) {
+function deliveredCard(d) {
+  if (!d || (!d.sent && !(d.errors || []).length)) return "";
+  return `<div class="card"><h2>Delivered</h2>${
+    d.sent ? `<p class="notice">sent to ${d.sent} webhook(s)</p>` : ""}${
+    (d.errors || []).map(e => `<p class="notice err">${esc(e)}</p>`).join("")}</div>`;
+}
+
+function passwordCard(d) {
+  return d.exposed
+    ? `<div class="card"><h2>Password</h2>
+       <p class="big err">Compromised, seen ${d.count.toLocaleString()} time(s).</p>
+       <p class="notice">Do not use it anywhere.</p></div>`
+    : `<div class="card"><h2>Password</h2>
+       <p class="big" style="color:var(--good)">Not found in the Pwned Passwords set.</p>
+       <p class="notice">Absence is not proof of safety.</p></div>`;
+}
+
+function render(payload, kind, delivery) {
   const s = payload.sections || {};
   const html = [];
+  const sent = deliveredCard(delivery);
+
+  if (s.password) {
+    // Reopened from Recent. The subject is masked, so it reads as a reminder
+    // of which password rather than a copy of it.
+    $("#results").innerHTML = `<div class="card"><h2>Subject</h2>
+      <p class="big">${esc(payload.subject)}</p></div>`
+      + passwordCard(s.password) + sent + exportBar();
+    return;
+  }
+
+  if (s.watch) {
+    $("#results").innerHTML = watchTable(s.watch) + sent;
+    return;
+  }
 
   if (s.bulk) {
     html.push(bulkTable(s.bulk, false));
     if (payload.notes?.length) html.push(notes(payload.notes));
-    html.push(exportBar());
+    html.push(sent, exportBar());
     $("#results").innerHTML = html.join("");
     return;
   }
 
   if (kind === "domain") html.push(`<div class="card poccard">
-    <b>Proof of concept.</b> The domain checker is a test of a concept and may
-    not give accurate results. Needs more research.</div>`);
+    <b>Proof of concept.</b> May not give accurate results.</div>`);
   if (s.risk) html.push(scoreCard(s.risk));
   html.push(tiles(s));
   if (s.risk && s.risk.actions && s.risk.actions.length) html.push(todo(s.risk.actions));
@@ -511,7 +738,7 @@ function render(payload, kind) {
   if (s.recon && s.recon.subdomains && s.recon.subdomains.length)
     html.push(subdomains(s.recon.subdomains));
   if (payload.notes && payload.notes.length) html.push(notes(payload.notes));
-  html.push(exportBar());
+  html.push(sent, exportBar());
 
   $("#results").innerHTML = html.join("");
 }
@@ -527,6 +754,23 @@ function dedupe(list) {
 
 function tone(label) {
   return { Critical: "bad", High: "bad", Moderate: "warn", Medium: "warn" }[label] || "good";
+}
+
+const BANDS = [[0, "Minimal"], [20, "Low"], [40, "Moderate"], [60, "High"],
+               [80, "Critical"]];
+
+function howScored(score) {
+  const bands = BANDS.map(([min, name], i) => {
+    const max = BANDS[i + 1] ? BANDS[i + 1][0] - 1 : 100;
+    const on = score >= min && score <= max;
+    return `<span class="band${on ? " on" : ""}">${min}-${max} ${name}</span>`;
+  }).join("");
+  return `<details class="how"><summary>How this is scored</summary>
+    <div class="bands">${bands}</div>
+    <p>Each line above adds points, and together they make the score. What
+    leaked matters more than how often. Ex. One breach with your password in it
+    counts for more than ten with only your email address.</p>
+  </details>`;
 }
 
 function scoreCard(risk) {
@@ -547,8 +791,8 @@ function scoreCard(risk) {
     <ul class="factors">${
       (risk.factors || []).map(f =>
         `<li class="${esc(f.weight)}"><code>+${f.points}</code><span>${esc(f.reason)}</span></li>`
-      ).join("") || '<li class="notice">Nothing scored — no exposure found.</li>'
-    }</ul></div></div>`;
+      ).join("") || '<li class="notice">Nothing scored, no exposure found.</li>'
+    }</ul></div>${howScored(score)}</div>`;
 }
 
 function tiles(s) {
@@ -575,8 +819,7 @@ function tiles(s) {
 
 function todo(actions) {
   return `<div class="card"><h2>What to do now</h2>
-    <p class="poc">Proof of concept — this advice is generated from the
-    findings above and may be inaccurate.</p>
+    <p class="poc">Proof of concept, this advice may be inaccurate.</p>
     <ol class="todo">${
     actions.map(a => `<li><div><b>${esc(a.title)}</b><p>${esc(a.detail)}</p></div></li>`)
       .join("")}</ol></div>`;
@@ -592,14 +835,14 @@ function classTag(c) {
 
 // A heavily-exposed address can hit 200+ breaches. Rendering every one makes
 // the page thousands of pixels tall and janky to scroll, so the long lists are
-// capped in the UI — the full set is always in the exported report.
+// capped in the UI; the full set is always in the exported report.
 const ROW_CAP = 60;
 const TL_CAP = 50;
 
 function more(shown, total, what) {
   return total > shown
-    ? `<p class="notice">Showing the ${shown} most recent of ${total} ${what} —
-       export the report for the full set.</p>`
+    ? `<p class="notice">Showing ${shown} of ${total} ${what}, export for the
+       full set.</p>`
     : "";
 }
 
@@ -624,8 +867,7 @@ function breachTable(breaches) {
 
 function accounts(list) {
   return `<div class="card"><h2>Registered accounts (${list.length})</h2>
-    <p class="notice" style="margin:-8px 0 12px">Sites confirmed to have an account
-    on this address — the exact list to enable 2FA on.</p>
+    <p class="notice" style="margin:-8px 0 12px">The accounts to enable 2FA on.</p>
     <div class="grid">${list.map(a =>
       `<div class="item">${esc(a.site)}</div>`).join("")}</div></div>`;
 }
@@ -643,8 +885,7 @@ function sites(list) {
 
 function leaks(list) {
   return `<div class="card"><h2>Leak records (${list.length})</h2>
-    <p class="notice" style="margin:-8px 0 12px">Secret values are redacted —
-    footprint records that a field was present, never its value.</p>
+    <p class="notice" style="margin:-8px 0 12px">Secrets redacted.</p>
     <div class="scroll"><table><thead><tr><th>Database</th><th>Fields present</th>
     <th>Username</th></tr></thead><tbody>${list.slice(0, 60).map(r =>
       `<tr><td>${esc(r.database)}</td>
@@ -655,8 +896,7 @@ function leaks(list) {
 
 function darkweb(list) {
   return `<div class="card"><h2>Dark-web index (${list.length})</h2>
-    <p class="notice" style="margin:-8px 0 12px">Catalog metadata only —
-    never the leaked contents.</p>
+    <p class="notice" style="margin:-8px 0 12px">Metadata only.</p>
     <div class="scroll"><table><thead><tr><th>Date</th><th>Bucket</th><th>Name</th>
     </tr></thead><tbody>${list.slice(0, 60).map(m =>
       `<tr><td class="date">${esc(m.date || "?")}</td><td>${esc(m.bucket)}</td>
@@ -666,7 +906,7 @@ function darkweb(list) {
 function pastes(list) {
   return `<div class="card"><h2>Pastes (${list.length})</h2>
     <div class="grid">${list.map(p =>
-      `<div class="item">${esc(p.source)} — ${esc(p.title || "untitled")}</div>`)
+      `<div class="item">${esc(p.source)}: ${esc(p.title || "untitled")}</div>`)
       .join("")}</div></div>`;
 }
 
@@ -681,10 +921,9 @@ function posture(r) {
 
   let out = "";
   if (r.takeovers && r.takeovers.length) {
-    out += `<div class="alert"><b>Subdomain takeover — ${r.takeovers.length} dangling record(s)</b>
-      <p class="notice" style="margin:6px 0 0">These names point at a service that no
-      longer claims them. Anyone can register the target and serve content on your
-      domain.</p>
+    out += `<div class="alert"><b>Subdomain takeover: ${r.takeovers.length} dangling record(s)</b>
+      <p class="notice" style="margin:6px 0 0">Anyone could claim these and serve
+      content on your domain.</p>
       <div class="grid" style="margin-top:10px">${r.takeovers.map(t =>
         `<div class="item">${esc(t.host)} → ${esc(t.service)}</div>`).join("")}</div></div>`;
   }
@@ -703,10 +942,10 @@ function posture(r) {
     <div class="pi ${r.tls_rpt ? "y" : "w"}"><span>TLS-RPT</span>
       <b>${r.tls_rpt ? "present" : "missing"}</b></div>
     <div class="pi ${r.bimi ? "y" : ""}"><span>BIMI</span>
-      <b>${r.bimi ? "present" : "—"}</b></div>
+      <b>${r.bimi ? "present" : "-"}</b></div>
   </div>${r.subdomain_error
     ? `<p class="notice" style="margin-top:12px">Subdomain enumeration
-       unavailable — ${esc(r.subdomain_error)}</p>` : ""}${r.email_pattern
+       unavailable: ${esc(r.subdomain_error)}</p>` : ""}${r.email_pattern
     ? `<p class="notice" style="margin-top:12px">Email pattern:
        <code>${esc(r.email_pattern)}</code></p>` : ""}</div>`;
   return out;
@@ -729,7 +968,7 @@ function timeline(events) {
 
 function notes(list) {
   return `<div class="card"><h2>Sources skipped</h2>${
-    list.map(n => `<p class="notice">— ${esc(n)}</p>`).join("")}</div>`;
+    list.map(n => `<p class="notice">${esc(n)}</p>`).join("")}</div>`;
 }
 
 function exportBar() {
@@ -738,6 +977,9 @@ function exportBar() {
       <a href="/api/report?job=${encodeURIComponent(currentJob)}&token=${
         encodeURIComponent(TOKEN)}" download>
         <button class="ghost sm">Download report</button></a>
+      <a href="/api/report?format=json&job=${encodeURIComponent(currentJob)}&token=${
+        encodeURIComponent(TOKEN)}" download>
+        <button class="ghost sm">JSON</button></a>
       <button class="ghost sm" id="btnSend">Send to webhook</button>
       <span class="notice" id="sendState"></span>
     </div></div>`;
@@ -754,7 +996,7 @@ document.addEventListener("click", async (ev) => {
       method: "POST", body: JSON.stringify({ job: currentJob }),
     })).json();
     state.textContent = r.error ? r.error
-      : `sent to ${r.sent} webhook(s)` + (r.errors?.length ? ` — ${r.errors.join("; ")}` : "");
+      : `sent to ${r.sent} webhook(s)` + (r.errors?.length ? `: ${r.errors.join("; ")}` : "");
   } catch (err) {
     state.textContent = err.message;
   } finally {
@@ -763,6 +1005,102 @@ document.addEventListener("click", async (ev) => {
 });
 
 // --------------------------------------------------------------- settings
+// --- which sources will run
+// A key that is missing means a source sits out, and until now you only found
+// that out afterwards in "Sources skipped".
+const SOURCES = {
+  email: [["XposedOrNot"], ["Gravatar"], ["EmailRep"], ["HIBP", "hibp"],
+          ["DeHashed", "dehashed"], ["IntelX", "intelx"], ["holehe", "holehe"]],
+  domain: [["DNS"], ["crt.sh"], ["HIBP", "hibp"], ["Hunter", "hunter"]],
+  username: [["WhatsMyName"]],
+  password: [["Pwned Passwords"]],
+  bulk: [], watch: [],
+};
+let ready = {};
+
+function drawSources() {
+  const list = SOURCES[$("#kind").value] || [];
+  $("#sources").innerHTML = list.map(([name, key]) => {
+    const on = !key || !!ready[key];
+    return `<span class="src${on ? "" : " off"}"${
+      on ? "" : ' title="needs a key, add one under Settings"'}>${esc(name)}</span>`;
+  }).join("");
+}
+
+async function loadReady() {
+  try {
+    const s = await (await api("/api/settings")).json();
+    ready = {
+      hibp: !!s.hibp, dehashed: !!(s.dehashed && s.dehashed_email),
+      intelx: !!s.intelx, hunter: !!s.hunter, holehe: !!s.holehe,
+    };
+  } catch (err) { ready = {}; }
+  drawSources();
+}
+loadReady();
+
+// --- recent scans
+const hdlg = $("#history");
+
+function ago(secs) {
+  const d = Date.now() / 1000 - secs;
+  if (d < 60) return "just now";
+  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+  return `${Math.floor(d / 86400)}d ago`;
+}
+
+async function loadHistory() {
+  const items = (await (await api("/api/history")).json()).items || [];
+  $("#histList").innerHTML = items.length ? items.map(h => `<div class="hrow"
+      data-open="${h.id}"><span class="hscore">${h.score || 0}</span>
+      <b class="hsub">${esc(h.subject)}</b>
+      <span class="notice">${esc(h.kind)}</span>
+      <span class="hwhen">${ago(h.created)}</span></div>`).join("")
+    : `<p class="notice">Nothing yet.</p>`;
+}
+
+$("#btnHistory").onclick = async () => { await loadHistory(); hdlg.showModal(); };
+$("#btnHistClose").onclick = () => hdlg.close();
+$("#btnHistClear").onclick = async () => {
+  await api("/api/history", { method: "POST", body: JSON.stringify({ clear: true }) });
+  loadHistory();
+};
+
+$("#histList").addEventListener("click", async (ev) => {
+  const row = ev.target.closest("[data-open]");
+  if (!row) return;
+  const r = await (await api("/api/history", {
+    method: "POST", body: JSON.stringify({ open: Number(row.dataset.open) }),
+  })).json();
+  if (r.error) return fail(r.error);
+  hdlg.close();
+  hideBar();
+  $("#progress").innerHTML = "";
+  $("#empty").classList.add("hide");
+  currentJob = r.job;
+  const k = String(r.payload.kind || "");
+  render(r.payload, k.startsWith("bulk-") ? "bulk" : k);
+});
+
+// --- stopping a long scan
+// Only the sweeps are worth stopping. An email or domain scan is a handful of
+// parallel calls that are over before you reach for the button.
+const STOPPABLE = new Set(["username", "bulk"]);
+
+function showStop(on) {
+  const b = $("#btnStop");
+  b.classList.toggle("hide", !on);
+  if (on) { b.disabled = false; b.textContent = "Stop"; }
+}
+
+$("#btnStop").onclick = async () => {
+  if (!currentJob) return;
+  $("#btnStop").disabled = true;
+  $("#btnStop").textContent = "Stopping";
+  await api("/api/stop", { method: "POST", body: JSON.stringify({ job: currentJob }) });
+};
+
 const dlg = $("#settings");
 $("#btnSettings").onclick = async () => {
   const s = await (await api("/api/settings")).json();
@@ -772,8 +1110,6 @@ $("#btnSettings").onclick = async () => {
   $("#s_hunter").placeholder = s.hunter || "not set";
   $("#s_emailrep").placeholder = s.emailrep || "not set";
   $("#s_dehashed_email").value = s.dehashed_email || "";
-  $("#s_tor").checked = !!s.tor;
-  $("#s_tor_proxy").value = s.tor_proxy || "";
   $("#s_cache").checked = !!s.cache;
   renderHooks(s.webhooks || []);
   $("#s_webhooks").value = "";
@@ -809,7 +1145,7 @@ $("#hookList").addEventListener("click", (ev) => {
   dropped.add(Number(i));
   btn.closest(".hook").style.opacity = ".35";
   btn.closest(".hook").querySelector("input").checked = false;
-  $("#hookState").textContent = `${dropped.size} marked for removal — Save to apply.`;
+  $("#hookState").textContent = `${dropped.size} marked for removal. Save to apply.`;
 });
 
 $("#btnTestHook").onclick = async () => {
@@ -820,7 +1156,7 @@ $("#btnTestHook").onclick = async () => {
       method: "POST", body: JSON.stringify({ test: true }),
     })).json();
     el.textContent = r.error ? r.error
-      : `sent to ${r.sent} webhook(s)` + (r.errors?.length ? ` — ${r.errors.join("; ")}` : "");
+      : `sent to ${r.sent} webhook(s)` + (r.errors?.length ? `: ${r.errors.join("; ")}` : "");
   } catch (err) { el.textContent = err.message; }
 };
 $("#btnClose").onclick = () => { dropped.clear(); dlg.close(); };
@@ -838,7 +1174,6 @@ $("#btnSave").onclick = async () => {
       hibp: $("#s_hibp").value, dehashed_email: $("#s_dehashed_email").value,
       dehashed: $("#s_dehashed").value, intelx: $("#s_intelx").value,
       hunter: $("#s_hunter").value, emailrep: $("#s_emailrep").value,
-      tor: $("#s_tor").checked, tor_proxy: $("#s_tor_proxy").value,
       cache: $("#s_cache").checked,
       webhook_states: states,
       add_webhooks: added,
@@ -850,6 +1185,7 @@ $("#btnSave").onclick = async () => {
   ["s_hibp", "s_dehashed", "s_intelx", "s_hunter", "s_emailrep", "s_webhooks"]
     .forEach(id => { $("#" + id).value = ""; });
   renderHooks(res.settings?.webhooks || []);
+  loadReady();
   dlg.close();
 };
 

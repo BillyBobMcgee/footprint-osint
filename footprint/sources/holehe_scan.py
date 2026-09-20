@@ -1,7 +1,7 @@
 """Registered-account discovery via holehe (keyless email → accounts).
 
 holehe checks whether an email is *registered* on 120+ sites by probing their
-password-reset / signup flows — no API key, and the target receives no email.
+password-reset / signup flows. No API key, and the target receives no email.
 This is the same technique the standalone `holehe` tool uses; footprint shells
 out to it so its async stack stays isolated.
 
@@ -19,14 +19,19 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from functools import lru_cache
 
 from footprint.config import Config
 from footprint.models import RegisteredAccount
 from footprint.sources.base import SourceError
 
 
+@lru_cache(maxsize=1)
 def _holehe_path() -> str | None:
-    """Locate the holehe CLI on PATH or beside the running interpreter."""
+    """Locate the holehe CLI on PATH or beside the running interpreter.
+
+    Cached: a bulk run would otherwise re-scan PATH for every subject.
+    """
     found = shutil.which("holehe")
     if found:
         return found
@@ -66,7 +71,7 @@ def scan(email: str, config: Config) -> list[RegisteredAccount]:
     holehe_bin = _holehe_path()
     if not holehe_bin:
         raise SourceError(
-            "holehe not installed — run `pip install holehe` to enable "
+            "holehe not installed, run `pip install holehe` to enable "
             "registered-account discovery."
         )
 

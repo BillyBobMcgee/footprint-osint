@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 import responses
@@ -18,7 +19,7 @@ def _breach(name="adobe", when="2013-10-04", classes=("Passwords",)):
 
 
 def _payload(**sections):
-    """Build the exact shape a real scan emits — Profile.to_dict(), all plain.
+    """Build the exact shape a real scan emits: Profile.to_dict(), all plain.
 
     Going through Profile matters: the notifier serialises this payload, so a
     fixture holding live dataclasses would pass while real output failed.
@@ -29,7 +30,7 @@ def _payload(**sections):
     return p.to_dict()
 
 
-# ------------------------------------------------------------------ detection
+# --- detection
 
 def test_discord_urls_are_recognised():
     assert notify.is_discord(DISCORD)
@@ -96,25 +97,39 @@ def test_masked_config_never_reveals_a_webhook():
     assert DISCORD not in json.dumps(masked)
 
 
-# -------------------------------------------------------------------- embeds
+# --- embeds
 
 def test_profile_embed_carries_score_counts_and_actions():
     embed = notify.profile_embed(_payload(breaches=[_breach()]))
 
-    # The brand belongs to the footer alone, not the title.
-    assert embed["title"] == "Email: you@example.com"
+    # The title names the task; the subject is underlined in the description.
+    assert embed["title"] == "Task: Email Check"
+    assert "__you@example.com__" in embed["description"]
     assert "footprint" not in embed["title"]
     assert "footprint" in embed["footer"]["text"]
     assert "/100" in embed["description"]
     names = [f["name"] for f in embed["fields"]]
-    assert "Found" in names
+    assert "Breaches" in names
     assert any(n.startswith("What to do now") for n in names)
+    # Counts render as columns, so they must be inline.
+    assert all(f["inline"] for f in embed["fields"] if f["name"] == "Breaches")
 
 
 def test_actions_field_is_marked_proof_of_concept():
     embed = notify.profile_embed(_payload(breaches=[_breach()]))
     actions = next(f for f in embed["fields"] if f["name"].startswith("What to do"))
-    assert "proof of concept" in actions["name"].lower()
+    assert "proof of concept" in actions["value"].lower()
+
+
+def test_score_line_shows_a_meter_and_a_severity_dot():
+    description = notify.profile_embed(_payload(breaches=[_breach()]))["description"]
+    assert "█" in description or "░" in description
+    assert any(dot in description for dot in notify.DOTS.values())
+
+
+def test_every_embed_is_timestamped():
+    """Discord renders it beside the footer, so a stale alert is obvious."""
+    assert datetime.fromisoformat(notify.test_embed()["timestamp"]).tzinfo is not None
 
 
 def test_domain_embeds_are_marked_proof_of_concept():
@@ -178,11 +193,12 @@ def test_bullets_truncates_and_says_how_many_were_dropped():
 
 def test_watch_embed_lists_only_the_new_findings():
     embed = notify.watch_embed({"you@example.com": ["breach: Adobe (2013)"]})
-    assert "1 new finding" in embed["title"]
+    assert embed["title"] == "Task: Watch Check"
+    assert "1 new finding" in embed["description"]
     assert "Adobe" in embed["fields"][0]["value"]
 
 
-# -------------------------------------------------------------------- sending
+# --- sending
 
 @responses.activate
 def test_discord_receives_an_embeds_payload():
@@ -193,7 +209,7 @@ def test_discord_receives_an_embeds_payload():
     assert results == [(DISCORD, None)]
     body = json.loads(responses.calls[0].request.body)
     assert "embeds" in body and len(body["embeds"]) == 1
-    assert body["embeds"][0]["title"] == "Webhook test"
+    assert body["embeds"][0]["title"] == "Task: Webhook Test"
 
 
 @responses.activate

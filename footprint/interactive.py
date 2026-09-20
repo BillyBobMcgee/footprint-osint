@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 
-from footprint import __version__, aggregate, bulk, output, reports, storage
+from footprint import __version__, aggregate, bulk, output, reports, scoring, storage
 from footprint.config import Config
 from footprint.sources import pwned_passwords
 from footprint.sources import username as username_src
@@ -34,7 +34,7 @@ MENU = """[bold]Choose an action:[/bold]
   [cyan]5[/cyan]  Bulk scan (emails, domains, usernames, or passwords)
   [cyan]6[/cyan]  Watch / monitor (alert on new exposure)
   [cyan]7[/cyan]  Open the web GUI
-  [cyan]8[/cyan]  Settings (API keys, Tor, cache)
+  [cyan]8[/cyan]  Settings (API keys, cache)
   [cyan]9[/cyan]  Quit"""
 
 
@@ -76,7 +76,7 @@ def run(config: Config) -> int:
             console.print("\n[dim](cancelled)[/dim]")
 
 
-# --------------------------------------------------------------------- actions
+# --- actions
 def _do_email(config: Config) -> None:
     email = Prompt.ask("Email address").strip()
     if not email:
@@ -116,10 +116,15 @@ def _do_username(config: Config) -> None:
     category = Prompt.ask("Filter by category (blank = all)", default="").strip() or None
     with console.status("Checking sites…"):
         hits = username_src.check_username(handle, config, category=category)
+    assessment = scoring.assess_username(hits)
+    output.render_assessment(assessment)
     output.render_username(hits)
-    _offer_report(
-        {"subject": handle, "kind": "username", "sections": {"sites": [h.to_dict() for h in hits]}}
-    )
+    output.render_actions(assessment)
+    _offer_report({
+        "subject": handle, "kind": "username",
+        "sections": {"sites": [h.to_dict() for h in hits],
+                     "risk": assessment.to_dict()},
+    })
 
 
 def _do_batch(config: Config) -> None:
@@ -176,6 +181,7 @@ def _do_watch(config: Config) -> None:
         if subject:
             storage.add_to_watchlist(subject, "email")
             console.print(f"[green]added[/green] {subject}")
+            console.print("[dim]the first check sets the baseline[/dim]")
     elif action == "r":
         subject = Prompt.ask("Email to stop watching").strip()
         if subject:
@@ -194,12 +200,13 @@ def _do_watch(config: Config) -> None:
 def _run_watch_check(config: Config) -> None:
     items = storage.watchlist()
     if not items:
-        console.print("[dim]watchlist is empty — add someone first[/dim]")
+        console.print("[dim]watchlist is empty, add someone first[/dim]")
         return
     any_new = False
-    for subject, _kind in items:
+    for subject, kind in items:
         with console.status(f"[cyan]{subject}[/cyan]…"):
-            profile = aggregate.email_profile(subject, config)
+            profile = (aggregate.domain_profile(subject, config) if kind == "domain"
+                       else aggregate.email_profile(subject, config))
         findings = storage.fingerprints(profile)
         new = storage.diff_new(subject, findings)
         if new:
@@ -213,19 +220,19 @@ def _run_watch_check(config: Config) -> None:
         console.print("[dim]nothing new across the watchlist[/dim]")
 
 
-# ------------------------------------------------------------------- settings
+# --- settings
 def _do_settings(config: Config) -> Config:
     masked = config.masked()
     console.print(Panel.fit(
         "\n".join(f"{k}: {v}" for k, v in masked.items() if "key" in k or k in
-                  ("tor", "cache_enabled", "profile")),
+                  ("cache_enabled", "profile")),
         title="current settings",
     ))
     field = Prompt.ask(
         "Set: [cyan]hibp[/cyan], [cyan]dehashed[/cyan], [cyan]intelx[/cyan], "
-        "[cyan]hunter[/cyan], [cyan]emailrep[/cyan], [cyan]tor[/cyan], "
-        "[cyan]cache[/cyan], [cyan]back[/cyan]",
-        choices=["hibp", "dehashed", "intelx", "hunter", "emailrep", "tor", "cache", "back"],
+        "[cyan]hunter[/cyan], [cyan]emailrep[/cyan], [cyan]cache[/cyan], "
+        "[cyan]back[/cyan]",
+        choices=["hibp", "dehashed", "intelx", "hunter", "emailrep", "cache", "back"],
         default="back",
     )
     if field == "back":
@@ -241,10 +248,6 @@ def _do_settings(config: Config) -> Config:
         config.hunter_api_key = Prompt.ask("Hunter.io API key", password=True).strip() or None
     elif field == "emailrep":
         config.emailrep_api_key = Prompt.ask("EmailRep API key", password=True).strip() or None
-    elif field == "tor":
-        config.tor = Confirm.ask("Route traffic through Tor?", default=config.tor)
-        if config.tor:
-            config.tor_proxy = Prompt.ask("Tor SOCKS proxy", default=config.tor_proxy)
     elif field == "cache":
         config.cache_enabled = Confirm.ask("Enable response cache?", default=config.cache_enabled)
         if config.cache_enabled:
@@ -256,7 +259,7 @@ def _do_settings(config: Config) -> Config:
     return config
 
 
-# -------------------------------------------------------------------- helpers
+# --- helpers
 def _offer_report(payload: dict) -> None:
     if not Confirm.ask("Save a report?", default=False):
         return

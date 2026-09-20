@@ -3,74 +3,59 @@
 All notable changes to this project are documented here. Versions follow
 [semantic versioning](https://semver.org/).
 
-## [0.3.0]
+## [Unreleased]
 
-### Added
+Nothing yet.
 
-- **Bulk scanning** — `footprint batch` handles emails, domains, usernames, and
-  passwords through one code path, auto-detecting the kind per file. Input is
-  plain text, one subject per line. Password mode labels entries by line number
-  and detects reuse locally; passwords are never used as a subject, written to
-  a report, or sent to a webhook, lookups are keyed by hash, and entries
-  sharing a hash prefix share a single API call. Available from the CLI, the
-  interactive menu, and the GUI, which streams each row as it finishes.
+## [1.0.0] first release
 
-- **Local web GUI** (`footprint gui`) built on the standard library — no extra
-  dependencies. Sources stream progress over Server-Sent Events so results fill
-  in as they arrive. Binds loopback only, and gates every API call behind a
+Check what an email, password, domain, or username exposes, score it locally,
+and say what to fix. Works with no API keys.
+
+### Checks
+
+- **Email**: breaches, pastes, leak records, dark-web index hits, reputation,
+  and registered-account discovery, merged into one exposure timeline.
+- **Password**: k-anonymity lookup against Pwned Passwords. Only the first 5
+  characters of the SHA-1 go to the source. Webhook messages name the password
+  so the verdict is readable, in bulk runs too; `--no-notify` skips it.
+- **Domain** *(proof of concept)*: SPF/DMARC/DKIM/DNSSEC/MTA-STS/TLS-RPT/BIMI
+  posture, certificate-transparency subdomains, and dangling-CNAME takeover
+  detection across 19 hosting services.
+- **Username**: presence across ~700 sites, scored for cross-site linkability.
+- **Bulk**: any of the above from a plain text file, one subject per line.
+  Password entries are labelled by line number on screen and in reports. Only
+  the webhook message names them.
+- **Watch**: re-scan a list and report only what is new since last time.
+
+### Interfaces
+
+- A CLI, an interactive menu, and a local web GUI (`footprint gui`) built on the
+  standard library with no extra dependencies. The GUI streams source progress
+  as results arrive, binds loopback only, and gates every API call behind a
   per-run random token.
-- **Exposure scoring** — an explainable 0-100 score computed locally from
-  breach count, recency, and the severity of what actually leaked, with the
-  reasons always summing to the score.
-- **Remediation advice** derived from the leaked data classes, so the steps are
-  specific: leaked security questions say to replace them with random strings,
-  a leaked phone number says to set a carrier port-out PIN.
-- **Deeper domain recon** — DNSSEC, DKIM selector probing, MTA-STS, TLS-RPT,
-  and BIMI, plus subdomain-takeover detection across 19 hosting services.
-  Takeover requires both a matching CNAME target and the service's "nothing
-  here" fingerprint, so healthy sites are not flagged for their host.
-- **Username scoring** for cross-site linkability, weighting sensitive and
-  identity-linked sites.
-- **Webhooks** — push any result to Discord (rich embed plus the full HTML
-  report as an attachment) or to any JSON endpoint. Managed with
-  `footprint webhook add|remove|list|test|enable|disable`. Each webhook has its
-  own on/off switch (a tickbox per webhook in the GUI) so one can be muted
-  without deleting it; only enabled webhooks receive anything. Bulk runs attach
-  one report per exposed subject.
-- `footprint watch` and `footprint batch` as real subcommands; both were
-  previously reachable only from the interactive menu.
-- `--fail-on SCORE` to gate the exit code on severity rather than on any
-  finding at all.
+- The GUI keeps the last 200 scans, so you can reopen one without running it
+  again. It also shows which sources will run before you scan, stops a long
+  sweep on request, and exports either the HTML report or the raw JSON.
+  Password checks are recorded under a masked subject. `footprint history`
+  lists what is stored, `history clear` deletes it, and `history off` stops
+  recording.
 
-### Changed
+### Output
 
-- The interactive menu's batch option now uses the bulk module, so it handles
-  domains, usernames, and passwords instead of only emails.
-- Results are delivered to enabled webhooks automatically. `--notify` is no
-  longer needed (it is kept as a no-op); use `--no-notify`, or switch the
-  webhook off, to suppress delivery.
-- Reports are HTML only. The Markdown and CSV writers are gone, along with the
-  `--save {md,html,csv}` choice; `--save` is now a flag.
-- Email profiles run their sources concurrently, cutting a profile from roughly
-  eight sequential round-trips to one.
-- Watch mode now fingerprints domain findings, so a new subdomain takeover or a
-  DMARC policy regression raises an alert. Previously only HIBP breaches did.
-- crt.sh gets a hard timeout and no status retries. It 502s often, and the
-  shared session's retry policy turned an outage into a multi-minute stall.
+- An explainable 0-100 exposure score computed locally, where the stated reasons
+  always sum to the number, plus remediation steps derived from the data classes
+  that actually leaked. Each leaked class carries its own weight, so one leaked
+  password outranks a pile of breaches that only exposed an email address.
+- Standalone HTML reports with a detailed breach table.
+- Webhooks to Discord or any JSON endpoint, each with its own on/off switch.
+  Discord embeds are colour-coded by severity and carry the full report as
+  an attachment.
+- `--fail-on SCORE` to gate the exit code on severity rather than on any finding.
 
-### Fixed
+### Notes
 
-- A failed crt.sh lookup reported "0 subdomains", which read as a clean result
-  while also silently disabling takeover detection. Failures are now surfaced.
-- DKIM selector detection no longer false-positives on unrelated text in a
-  CNAME chain.
-- Console output falls back to ASCII where the terminal encoding cannot
-  represent box-drawing characters, instead of raising mid-report on the legacy
-  Windows console.
-
-## [0.2.0]
-
-- Initial public release: email, password, domain, and username checks across
-  HIBP, XposedOrNot, holehe, EmailRep, DeHashed, Intelligence X, Hunter.io,
-  crt.sh, and the WhatsMyName dataset, with Markdown/HTML/CSV reports, Tor
-  routing, and a response cache.
+- A scan that cannot reach any source is reported as a failure and exits `2`,
+  never as a clean result.
+- crt.sh is frequently unavailable; when it is, footprint says so rather than
+  reporting zero subdomains.

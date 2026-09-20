@@ -1,4 +1,4 @@
-"""XposedOrNot — a free, keyless breach-by-email index.
+"""XposedOrNot: a free, keyless breach-by-email index.
 
 Unlike HIBP (which charges for account lookups), XposedOrNot's email breach
 and analytics endpoints require no API key, so footprint can report breach
@@ -20,6 +20,14 @@ CATALOG_URL = "https://api.xposedornot.com/v1/breaches"
 MIN_INTERVAL = 0.5  # API allows ~2 requests/sec
 
 
+def _int(value) -> int:
+    """Record counts arrive as numbers or as text; one odd row must not lose all."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _parse_breach(item: dict) -> Breach:
     data = item.get("xposed_data") or ""
     return Breach(
@@ -28,7 +36,7 @@ def _parse_breach(item: dict) -> Breach:
         domain=item.get("domain", ""),
         breach_date=str(item.get("xposed_date") or "") or None,
         added_date=item.get("added"),
-        pwn_count=int(item.get("xposed_records") or 0),
+        pwn_count=_int(item.get("xposed_records")),
         data_classes=[d.strip() for d in data.split(";") if d.strip()],
         is_verified=str(item.get("verified", "")).lower() == "yes",
         description=item.get("details", ""),
@@ -49,7 +57,7 @@ def analytics(email: str, config: Config) -> tuple[list[Breach], dict]:
 
     data = result.json() or {}
     if isinstance(data, dict) and data.get("Error"):
-        return [], {}  # "Not found" — email is clean
+        return [], {}  # "Not found" means the email is clean
 
     details = (data.get("ExposedBreaches") or {}).get("breaches_details") or []
     breaches = [_parse_breach(item) for item in details]

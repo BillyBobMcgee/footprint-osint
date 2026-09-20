@@ -1,7 +1,7 @@
 """Gravatar existence + public profile enrichment for an email.
 
 Gravatar profiles are public by design. This reveals whether an email has a
-public avatar/profile and surfaces any self-published profile fields — useful
+public avatar/profile and surfaces any self-published profile fields, useful
 context when assessing an account's public footprint.
 """
 

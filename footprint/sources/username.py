@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from footprint.config import Config, config_dir
 from footprint.models import SiteHit
-from footprint.sources.base import build_session
+from footprint.sources.base import build_session, pooled_session
 
 WMN_URL = "https://raw.githubusercontent.com/WebBreacher/WhatsMyName/main/wmn-data.json"
 _DATASET_TTL = 7 * 24 * 3600  # a week
@@ -92,22 +93,32 @@ def load_sites(config: Config, refresh: bool = False) -> list[SiteRule]:
     return list(_FALLBACK)
 
 
-def _check_one(rule: SiteRule, account: str, config: Config) -> SiteHit:
-    session = build_session(config)
-    url = rule.uri.format(account=account)
+def _check_one(rule: SiteRule, account: str, config: Config,
+               should_stop: Callable[[], bool] | None = None) -> SiteHit:
+    if should_stop and should_stop():
+        return SiteHit(site=rule.name, url="", exists=False, category=rule.category)
+    url = rule.uri
     try:
-        resp = session.get(url, timeout=config.timeout, allow_redirects=True)
-        body = resp.text
+        # The dataset is community-edited, so a template that will not format
+        # is possible; it must skip the site, not abort the sweep.
+        url = rule.uri.format(account=account)
+        # Short connect timeout: a host that will not answer at all should
+        # not hold a worker for the full read budget.
+        resp = pooled_session(config).get(
+            url, timeout=(min(5.0, config.timeout), config.timeout),
+            allow_redirects=True,
+        )
         exists = resp.status_code == rule.e_code
-        if exists and rule.e_string and rule.e_string not in body:
-            exists = False
-        if exists and rule.m_string and rule.m_string in body:
-            exists = False
+        if exists and (rule.e_string or rule.m_string):
+            body = resp.text
+            if rule.e_string and rule.e_string not in body:
+                exists = False
+            if rule.m_string and rule.m_string in body:
+                exists = False
     except Exception:  # noqa: BLE001 - one flaky site must not abort the sweep
         exists = False
-    finally:
-        session.close()
-    return SiteHit(site=rule.name, url=url, exists=exists)
+    return SiteHit(site=rule.name, url=url, exists=exists,
+                   category=rule.category)
 
 
 def check_username(
@@ -117,6 +128,7 @@ def check_username(
     category: str | None = None,
     workers: int = 20,
     refresh: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[SiteHit]:
     """Check `username` across the dataset, optionally filtered by category."""
     sites = load_sites(config, refresh=refresh)
@@ -126,7 +138,8 @@ def check_username(
     results: list[SiteHit] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_check_one, rule, username, config): rule for rule in sites
+            pool.submit(_check_one, rule, username, config, should_stop): rule
+            for rule in sites
         }
         for future in as_completed(futures):
             results.append(future.result())
