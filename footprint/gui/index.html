@@ -86,7 +86,7 @@ button.sm{padding:7px 12px;font-size:13px;border-radius:8px}
 .wrow .x{background:none;border:0;color:var(--dim);font-size:16px;padding:0 4px;
   line-height:1;cursor:pointer}
 .wrow .x:hover{color:var(--bad);opacity:1}
-.wnew{color:var(--bad)} .wsame{color:var(--dim)}
+.wnew{color:var(--bad)} .wsame{color:var(--dim)} .wfail{color:var(--warn)}
 
 /* -------------------------------------------------------------- progress */
 #progress{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:22px}
@@ -461,14 +461,16 @@ let watchRows = [];
 
 function watchTable(rows) {
   const anyNew = rows.some(r => r.new.length);
+  const anyFailed = rows.some(r => r.error);
+  const note = text => `<p class="notice" style="margin:2px 0 8px 12px">${text}</p>`;
   return `<div class="card"><h2>Watch (${rows.length} checked)</h2>${
     rows.map(r => `<div class="wrow">
       <span class="who"><b>${esc(r.subject)}</b></span>
-      <span class="${r.new.length ? "wnew" : "wsame"}">${
-        r.new.length ? `${r.new.length} new` : "no change"}</span>
-    </div>${r.new.map(n => `<p class="notice" style="margin:2px 0 8px 12px">
-      • ${esc(n)}</p>`).join("")}`).join("")
-  }${anyNew ? "" : `<p class="notice">Nothing new.</p>`}</div>`;
+      <span class="${r.error ? "wfail" : r.new.length ? "wnew" : "wsame"}">${
+        r.error ? "not checked" : r.new.length ? `${r.new.length} new` : "no change"}</span>
+    </div>${r.error ? note(esc(r.error)) : ""}${
+      r.new.map(n => note(`• ${esc(n)}`)).join("")}`).join("")
+  }${anyNew || anyFailed ? "" : `<p class="notice">Nothing new.</p>`}</div>`;
 }
 
 function bulkLines() {

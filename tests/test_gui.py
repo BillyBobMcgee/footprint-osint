@@ -304,6 +304,26 @@ def test_watch_check_on_an_empty_list_errors(server, watchdir):
     assert "empty" in job.error
 
 
+def test_watch_check_marks_an_unreachable_subject(server, watchdir, monkeypatch):
+    """If no source answers the row shouldn't say "no change"."""
+    from footprint import aggregate
+    from footprint.gui.server import _run_scan
+
+    def dead(subject, config, **kw):
+        p = aggregate.Profile(subject=subject, kind="email")
+        p.failed = "could not reach any source. Not a clean result."
+        return p
+
+    monkeypatch.setattr("footprint.aggregate.email_profile", dead)
+    storage.add_to_watchlist("me@example.com", "email")
+    _, job = server[1].new_job("watch", "")
+    _run_scan(server[1], job)
+
+    [row] = job.payload["sections"]["watch"]
+    assert row["new"] == []
+    assert "could not reach" in row["error"]
+
+
 def test_watch_embed_is_skipped_when_nothing_is_new():
     """A quiet check must not post 'nothing happened' to Discord."""
     from footprint.gui.server import _embed_for

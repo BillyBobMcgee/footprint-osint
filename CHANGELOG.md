@@ -5,7 +5,11 @@ All notable changes to this project are documented here. Versions follow
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `watch check` said "no change" when it couldn't reach any source. Now it
+  warns and exits `2` and `--json` lists it under `failed`.
+- `watch check --json` printed "no change" lines before the JSON.
 
 ## [1.0.0] first release
 

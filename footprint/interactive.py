@@ -202,11 +202,15 @@ def _run_watch_check(config: Config) -> None:
     if not items:
         console.print("[dim]watchlist is empty, add someone first[/dim]")
         return
-    any_new = False
+    any_new = any_failed = False
     for subject, kind in items:
         with console.status(f"[cyan]{subject}[/cyan]…"):
             profile = (aggregate.domain_profile(subject, config) if kind == "domain"
                        else aggregate.email_profile(subject, config))
+        if profile.failed:
+            any_failed = True
+            console.print(f"[yellow]not checked[/yellow]  {subject}: {profile.failed}")
+            continue
         findings = storage.fingerprints(profile)
         new = storage.diff_new(subject, findings)
         if new:
@@ -216,7 +220,7 @@ def _run_watch_check(config: Config) -> None:
                 console.print(f"    • {label}")
         else:
             console.print(f"[green]no change[/green]  {subject}")
-    if not any_new:
+    if not any_new and not any_failed:
         console.print("[dim]nothing new across the watchlist[/dim]")
 
 

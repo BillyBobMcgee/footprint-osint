@@ -109,7 +109,9 @@ def _run_scan(state: State, job: Job) -> None:
                            if kind == "domain"
                            else aggregate.email_profile(subject, state.config))
                 new = storage.diff_new(subject, storage.fingerprints(profile))
-                row = {"subject": subject, "kind": kind, "new": list(new.values())}
+                # If nothing could be reached the page shouldn't say "no change".
+                row = {"subject": subject, "kind": kind, "new": list(new.values()),
+                       "error": profile.failed}
                 rows.append(row)
                 job.events.put({"type": "watchrow", **row})
             job.payload = {

@@ -503,14 +503,21 @@ def _cmd_watch(args, config) -> int:
         return EXIT_USAGE
 
     quiet = getattr(args, "quiet", False)
+    as_json = getattr(args, "json", False)
     found: dict[str, list[str]] = {}
+    failed: dict[str, str] = {}
     for subject, kind in items:
         profile = (aggregate.domain_profile(subject, config) if kind == "domain"
                    else aggregate.email_profile(subject, config))
+        if profile.failed:
+            # Nothing got checked so don't say "no change". Warn even with --quiet.
+            failed[subject] = profile.failed
+            output.warn(f"{subject}: {profile.failed}")
+            continue
         new = storage.diff_new(subject, storage.fingerprints(profile))
         if new:
             found[subject] = list(new.values())
-        elif not quiet:
+        elif not quiet and not as_json:
             output.info(f"[green]no change[/green]  {subject}")
 
     # Watch runs unattended, so deliver automatically rather than needing a
@@ -518,16 +525,18 @@ def _cmd_watch(args, config) -> int:
     if found and config.active_webhooks and not getattr(args, "no_notify", False):
         _deliver(config, notify.watch_embed(found))
 
-    if getattr(args, "json", False):
-        output.emit_json({"new": found})
+    if as_json:
+        output.emit_json({"new": found, "failed": failed})
     else:
         for subject, labels in found.items():
             output.info(f"[bold red]NEW exposure[/bold red] for {subject}:")
             for label in labels:
                 output.info(f"    • {label}")
-        if not found and not quiet:
+        if not found and not failed and not quiet:
             output.info("[dim]nothing new across the watchlist[/dim]")
-    return EXIT_FOUND if found else EXIT_OK
+    if found:
+        return EXIT_FOUND
+    return EXIT_SOURCE_ERROR if failed else EXIT_OK
 
 
 def _find_webhook(config, target: str):

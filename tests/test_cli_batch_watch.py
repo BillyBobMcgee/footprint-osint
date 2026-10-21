@@ -4,7 +4,7 @@ import pytest
 import responses
 
 from footprint import aggregate, storage
-from footprint.cli import EXIT_FOUND, EXIT_OK, EXIT_USAGE, main
+from footprint.cli import EXIT_FOUND, EXIT_OK, EXIT_SOURCE_ERROR, EXIT_USAGE, main
 from footprint.models import Breach
 
 
@@ -162,6 +162,41 @@ def test_watch_check_surfaces_a_newly_added_breach(monkeypatch, capsys):
     assert code == EXIT_FOUND
     assert "Linkedin" in out
     assert "Adobe" not in out  # already reported last time
+
+
+def _unreachable(subject, config, **kw):
+    p = aggregate.Profile(subject=subject, kind="domain")
+    p.failed = "could not reach any source (2 tried). Nothing was checked."
+    return p
+
+
+def test_watch_check_never_reports_an_unreachable_subject_as_unchanged(monkeypatch, capsys):
+    """A normal scan exits 2 when nothing answers so watch should too."""
+    monkeypatch.setattr("footprint.aggregate.domain_profile", _unreachable)
+    main(["watch", "add", "example.com", "--kind", "domain"])
+    capsys.readouterr()
+
+    code = main(["watch", "check", "--quiet"])
+
+    captured = capsys.readouterr()
+    assert code == EXIT_SOURCE_ERROR
+    assert "could not reach any source" in captured.err  # even with --quiet
+    assert "no change" not in captured.out
+
+
+def test_watch_check_json_stays_parseable_and_lists_failures(monkeypatch, capsys):
+    _stub_profiles(monkeypatch, {})
+    monkeypatch.setattr("footprint.aggregate.domain_profile", _unreachable)
+    main(["watch", "add", "me@example.com"])
+    main(["watch", "add", "example.com", "--kind", "domain"])
+    capsys.readouterr()
+
+    code = main(["watch", "check", "--json"])
+
+    data = json.loads(capsys.readouterr().out)
+    assert code == EXIT_SOURCE_ERROR
+    assert data["new"] == {}
+    assert list(data["failed"]) == ["example.com"]
 
 
 def test_fingerprints_are_stable_across_runs():
@@ -398,3 +433,17 @@ def test_interactive_watch_check_honours_the_stored_kind(monkeypatch):
     interactive._run_watch_check(Config())
 
     assert scanned == [("domain", "example.com"), ("email", "a@example.com")]
+
+
+def test_interactive_watch_check_flags_an_unreachable_subject(monkeypatch, capsys):
+    from footprint import interactive
+    from footprint.config import Config
+
+    storage.add_to_watchlist("example.com", "domain")
+    monkeypatch.setattr("footprint.aggregate.domain_profile", _unreachable)
+
+    interactive._run_watch_check(Config())
+
+    out = capsys.readouterr().out
+    assert "not checked" in out
+    assert "no change" not in out and "nothing new" not in out
