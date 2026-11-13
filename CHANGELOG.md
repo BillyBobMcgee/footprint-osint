@@ -10,6 +10,9 @@ All notable changes to this project are documented here. Versions follow
 - `watch check` said "no change" when it couldn't reach any source. Now it
   warns and exits `2` and `--json` lists it under `failed`.
 - `watch check --json` printed "no change" lines before the JSON.
+- With holehe installed, an email scan with no network came back clean. holehe
+  marks every site it can't reach as "not registered", so the scan counted it
+  as a source that answered. Now it counts as unreachable.
 
 ## [1.0.0] first release
 

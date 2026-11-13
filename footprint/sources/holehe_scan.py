@@ -23,7 +23,7 @@ from functools import lru_cache
 
 from footprint.config import Config
 from footprint.models import RegisteredAccount
-from footprint.sources.base import SourceError
+from footprint.sources.base import SourceError, Unreachable
 
 
 @lru_cache(maxsize=1)
@@ -66,6 +66,19 @@ def _parse_csv(text: str) -> list[RegisteredAccount]:
     return accounts
 
 
+def _reached_nothing(text: str) -> bool:
+    """True when holehe could not get an answer from a single site.
+
+    holehe writes a row for every site even with no network. A site it could
+    not reach comes out as rateLimit=True, exists=False, which reads the same
+    as "not registered" unless it is checked for here.
+    """
+    rows = list(csv.DictReader(io.StringIO(text)))
+    return bool(rows) and all(
+        str(row.get("rateLimit", "")).strip().lower() == "true" for row in rows
+    )
+
+
 def scan(email: str, config: Config) -> list[RegisteredAccount]:
     """Run holehe for an email and return the sites where it's registered."""
     holehe_bin = _holehe_path()
@@ -91,8 +104,11 @@ def scan(email: str, config: Config) -> list[RegisteredAccount]:
 
         csv_files = glob.glob(os.path.join(tmp, "*.csv"))
         if not csv_files:
-            return []
+            # No file means holehe died before checking anything.
+            raise SourceError("holehe gave no results")
         with open(csv_files[0], encoding="utf-8", errors="replace") as fh:
             text = fh.read()
 
+    if _reached_nothing(text):
+        raise Unreachable("holehe could not reach any site")
     return _parse_csv(text)
